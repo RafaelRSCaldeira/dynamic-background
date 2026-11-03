@@ -32,11 +32,27 @@ Para iniciar junto com o Windows, crie um atalho para `iniciar.bat` em `shell:st
 | Tecla | Ação |
 |---|---|
 | `M` | Mutar / ativar microfone |
+| `A` | Ajustes: modelo de transcrição, modelo do Ollama e câmera |
 | `C` | Ligar / desligar câmera |
 | `F` | Tela cheia (fora do modo quiosque) |
 | Clique | Onda no fundo |
 | Hover no gráfico de 24 h | Detalhes da hora |
 | Clique nas notícias | Próxima manchete (o hover pausa a rotação) |
+
+## Ajustes (botão ⚙ ou tecla `A`)
+
+- **Transcrição da fala:** escolha o modelo do Whisper, de `tiny` a `large-v3`. Se o modelo ainda não foi baixado, ele baixa em segundo plano enquanto o atual continua transcrevendo, e a troca acontece sozinha quando o download termina.
+- **IA da sala:** lista **todos** os modelos instalados no Ollama. Basta clicar para trocar. O modelo anterior é descarregado da VRAM, e os destaques são gerados de novo com o modelo escolhido. Modelos de embedding aparecem na lista, mas não podem ser escolhidos.
+- **Câmera:** liga e desliga a câmera, explica o que ela faz e mostra um medidor do movimento detectado no momento.
+- As escolhas ficam salvas em `preferencias.json` e valem mais que o `config.toml`. Apague o arquivo para voltar ao que está no `config.toml`.
+- Só o próprio computador pode trocar modelos; o celular em `/remote` continua apenas mutando.
+
+## Câmera
+
+Ela detecta só **movimento**, sem reconhecer rostos nem gravar nada:
+- quem se mexe na frente da tela vira um segundo "ponteiro": a aurora gira e as partículas se afastam naquele ponto;
+- um aceno amplo, com o braço inteiro, solta uma onda, como um clique;
+- sem ninguém se mexendo por `ociosidade_minutos`, o painel entra em **modo ambiente** (mais discreto) e volta quando alguém aparece.
 
 ## Privacidade
 
@@ -51,9 +67,9 @@ Para iniciar junto com o Windows, crie um atalho para `iniciar.bat` em `shell:st
 
 Os principais itens:
 - `[local] cidade`: a cidade é localizada automaticamente; também aceita `latitude`/`longitude`.
-- `[audio] modelo_whisper`: o padrão é `small`. Na RTX 3070, `large-v3-turbo` transcreve bem melhor e continua rápido.
+- `[audio] modelo_whisper`: o padrão `auto` usa o `large-v3-turbo` com GPU NVIDIA e o `small` só com CPU. Também dá para trocar em Ajustes.
 - `[audio] sensibilidade`: aumente se falas baixas não forem captadas; diminua se ruído virar texto.
-- `[ia] modelo`: qualquer modelo do Ollama (`gemma3:4b`, `qwen3:8b`, `llama3.1:8b`...). Com 8 GB de VRAM, prefira modelos de até ~8B, porque o Whisper também usa a GPU.
+- `[ia] modelo`: o modelo inicial do Ollama; em Ajustes dá para escolher qualquer modelo instalado. Com 8 GB de VRAM, prefira modelos de até ~8B, porque o Whisper também usa a GPU (o `large-v3-turbo` ocupa ~1,6 GB).
 - `[tela] fps_max` / `qualidade_fundo`: reduza para economizar energia num painel 24/7.
 - `[camera] ociosidade_minutos`: sem movimento por esse tempo, o painel entra em **modo ambiente** (só relógio e sala em destaque). Volta assim que alguém se mexe.
 
@@ -72,9 +88,11 @@ backend/
   privacidade.py   detecta outros apps usando o microfone (mute automático)
   sala.py          estado da sala: mute, transcrição em memória, insights
   dados.py         clima, ar, câmbio, feriados e notícias (APIs gratuitas, com cache)
+  modelos.py       catálogo do Whisper, lista de modelos do Ollama, preferencias.json
 frontend/
   index.html, css/style.css
   js/main.js       orquestra cena, interação, câmera e atalhos
+  js/ajustes.js    painel de Ajustes (modelos e câmera)
   js/fundo.js      shader da aurora (WebGL)
   js/particulas.js chuva, neve, estrelas, poeira e névoa
   js/camera.js     detecção de movimento
