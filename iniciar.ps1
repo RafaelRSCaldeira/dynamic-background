@@ -4,10 +4,32 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 $py = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
-if (-not (Test-Path $py)) {
-    Write-Host "Criando ambiente Python..." -ForegroundColor Cyan
-    python -m venv .venv
+
+# Tudo é instalado no ambiente isolado .venv — nunca no Python global ou no Anaconda.
+function Instalar-Dependencias {
+    Write-Host "Instalando dependencias no ambiente do projeto (.venv)..." -ForegroundColor Cyan
+    & $py -m pip install --upgrade pip -q
     & $py -m pip install -r requirements.txt
+    if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) {
+        Write-Host "Placa NVIDIA detectada: instalando bibliotecas CUDA..." -ForegroundColor Cyan
+        & $py -m pip install -r requirements-gpu.txt
+    }
+}
+
+if (-not (Test-Path $py)) {
+    Write-Host "Criando ambiente Python (.venv)..." -ForegroundColor Cyan
+    python -m venv .venv
+    Instalar-Dependencias
+}
+
+# Verificação rápida: se algo estiver faltando ou em conflito, reinstala as versões fixas.
+& $py -c "import fastapi, uvicorn, httpx, numpy, sounddevice, faster_whisper, onnxruntime, ctranslate2" 2>$null
+$importOk = $LASTEXITCODE -eq 0
+& $py -m pip check *> $null
+if (-not $importOk -or $LASTEXITCODE -ne 0) {
+    Write-Host "Dependencias ausentes ou em conflito; corrigindo..." -ForegroundColor Yellow
+    & $py -m pip uninstall -y onnxruntime-gpu *> $null   # convive mal com o onnxruntime normal
+    Instalar-Dependencias
 }
 
 $porta = 8765

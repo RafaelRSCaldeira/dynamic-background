@@ -1,6 +1,11 @@
-fastapi>=0.115
-uvicorn[standard]>=0.30
-httpx>=0.27
-numpy>=1.26
-sounddevice>=0.5
-faster-whisper>=1.1
+# Versões fixas, testadas juntas (Python 3.13/3.14, Windows).
+# Instale SEMPRE dentro do ambiente do projeto:  .venv\Scripts\python -m pip install -r requirements.txt
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+httpx==0.28.1
+numpy==2.5.4
+sounddevice==0.5.6
+faster-whisper==1.2.1
+ctranslate2==4.8.5
+onnxruntime==1.31.1   # usado pelo filtro de voz (Silero VAD) do faster-whisper — NÃO instale onnxruntime-gpu junto
+av==19.0.2
