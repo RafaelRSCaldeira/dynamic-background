@@ -14,11 +14,16 @@ Ouve a sala e mostra destaques da conversa gerados **localmente** (Whisper + Oll
    ```powershell
    ollama pull gemma3:4b
    ```
-2. **Dependências.** Não rode `pip install` direto no terminal: o comando `pip` desta máquina aponta para o Python global (`C:\Python314`), que já tem outras versões de `onnxruntime` e `ctranslate2`. O `iniciar.bat` cria e confere sozinho o ambiente isolado `.venv`, com as versões fixas de `requirements.txt` (e as libs CUDA se houver placa NVIDIA). Se ele encontrar algo faltando ou em conflito, reinstala. Para instalar manualmente, use sempre `.venv\Scripts\python -m pip install -r requirements.txt`.
+2. **Dependências.** Não rode `pip install` direto no terminal: o comando `pip` desta máquina aponta para o Python global (`C:\Python314`), que já tem outras versões de `onnxruntime` e `ctranslate2`. O `iniciar.bat` cria e confere sozinho o ambiente isolado `.venv`, com as versões compatíveis de `requirements.txt` (e as libs CUDA se houver placa NVIDIA). Se ele encontrar algo faltando ou em conflito, reinstala. Para instalar manualmente, use sempre `.venv\Scripts\python -m pip install -r requirements.txt`.
 3. **Iniciar.** Dê dois cliques em `iniciar.bat`. Ele sobe o servidor e abre o Edge em modo quiosque (tela cheia).
    Para sair, use **Alt+F4**.
 
    Se preferir abrir manualmente, rode `.venv\Scripts\python -m backend.main` e acesse `http://localhost:8765`.
+
+**Se algo der errado:** a janela do `iniciar.bat` fica aberta mostrando o erro. O log do servidor fica em `logs\servidor-erros.log`.
+- `iniciar.bat -Reinstalar` recria o `.venv` do zero.
+- `iniciar.bat -SemNavegador` sobe só o servidor (abra `http://127.0.0.1:8765`).
+- O script escolhe sozinho um Python compatível (3.10 a 3.14, 64 bits) e prefere o 3.13. Se nenhum servir, ele avisa qual instalar.
 
 Para iniciar junto com o Windows, crie um atalho para `iniciar.bat` em `shell:startup` (digite isso em Win+R).
 
