@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Painel Ambiente</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <canvas id="fundo" aria-hidden="true"></canvas>
+  <canvas id="particulas" aria-hidden="true"></canvas>
+
+  <main id="painel">
+    <section class="card livre w-relogio" data-w="relogio" style="--i:0"></section>
+    <section class="card livre w-agora"   data-w="agora"   style="--i:1"></section>
+    <section class="card w-horas"   data-w="horas"   style="--i:2"></section>
+    <section class="card w-semana"  data-w="semana"  style="--i:3"></section>
+    <section class="card w-ceu"     data-w="ceu"     style="--i:4"></section>
+    <section class="card w-mercado" data-w="mercado" style="--i:5"></section>
+    <section class="card w-sala"    data-w="sala"    style="--i:2"></section>
+    <section class="card w-noticias" data-w="noticias" style="--i:6"></section>
+  </main>
+
+  <nav id="controles" aria-label="Controles">
+    <button id="btn-camera" class="ctl" title="Câmera (C)"></button>
+    <button id="btn-tela" class="ctl" title="Tela cheia (F)"></button>
+  </nav>
+
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+# Opcional: bibliotecas CUDA para o Whisper rodar na GPU NVIDIA (CUDA 12 + cuDNN 9).
+# Instale com:  .venv\Scripts\python -m pip install -r requirements-gpu.txt
+nvidia-cublas-cu12
+nvidia-cudnn-cu12==9.*

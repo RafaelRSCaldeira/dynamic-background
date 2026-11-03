@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#05070f">
+  <title>Painel · Microfone</title>
+  <style>
+    :root { color-scheme: dark; --ok: #4ade80; --perigo: #f87171; --alerta: #fbbf24; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100dvh; display: grid; place-items: center; padding: 16px;
+      font-family: Inter, "Segoe UI", system-ui, sans-serif; color: #f3f6fb;
+      background: radial-gradient(120% 80% at 50% 0%, #12244d, #05070f 70%); }
+    main { width: min(100%, 360px); text-align: center; }
+    h1 { font-size: 13px; letter-spacing: .2em; text-transform: uppercase; color: rgba(255,255,255,.5); font-weight: 600; }
+    button { width: 220px; height: 220px; border-radius: 50%; border: 1px solid rgba(255,255,255,.15); cursor: pointer;
+      background: rgba(255,255,255,.08); color: inherit; display: grid; place-items: center; margin: 28px auto;
+      transition: background .3s, box-shadow .3s, transform .15s; -webkit-tap-highlight-color: transparent; }
+    button:active { transform: scale(.96); }
+    button svg { width: 72px; height: 72px; }
+    body.mutado button { background: rgba(248,113,113,.2); border-color: rgba(248,113,113,.6); box-shadow: 0 0 60px -10px rgba(248,113,113,.8); }
+    body.ouvindo button { box-shadow: 0 0 60px -14px rgba(74,222,128,.7); }
+    #estado { font-size: 20px; font-weight: 500; }
+    #detalhe { margin-top: 6px; font-size: 14px; color: rgba(255,255,255,.55); min-height: 1.2em; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Microfone da sala</h1>
+    <button id="botao" aria-label="Mutar ou ativar microfone"></button>
+    <div id="estado">Conectando…</div>
+    <div id="detalhe"></div>
+  </main>
+  <script type="module">
+    import { conectar } from '/js/api.js';
+    import { mini } from '/js/icones.js';
+    const botao = document.getElementById('botao'), est = document.getElementById('estado'), det = document.getElementById('detalhe');
+    const NOMES = { ouvindo: 'Ouvindo', mutado: 'Mutado', auto: 'Mutado automaticamente', carregando: 'Carregando…', iniciando: 'Iniciando…', erro: 'Microfone indisponível', desativado: 'Áudio desativado' };
+    let s = {};
+    const render = () => {
+      botao.innerHTML = s.mutado_manual ? mini.micOff : mini.mic;
+      document.body.className = s.mutado ? 'mutado' : s.estado === 'ouvindo' ? 'ouvindo' : '';
+      est.textContent = NOMES[s.estado] || 'Conectando…';
+      det.textContent = s.estado === 'auto' ? s.motivo_auto : s.mutado_manual ? 'Toque para voltar a ouvir' : 'Toque para mutar';
+    };
+    const c = conectar(m => { if (m.tipo === 'sala') { s = m; render(); } }, ok => { if (!ok) { est.textContent = 'Sem conexão'; det.textContent = ''; } });
+    botao.addEventListener('click', () => { c.enviar({ acao: 'mute' }); navigator.vibrate?.(30); });
+    render();
+  </script>
+</body>
+</html>

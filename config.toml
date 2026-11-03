@@ -1,0 +1,66 @@
+# ─────────────────────────────────────────────────────────────
+#  Painel Ambiente — configuração
+#  Reinicie o servidor depois de alterar este arquivo.
+# ─────────────────────────────────────────────────────────────
+
+[servidor]
+porta = 8765
+# true = permite abrir http://<ip-do-pc>:8765/remote no celular para mutar o microfone.
+# Clientes remotos recebem SOMENTE o estado do microfone, nunca a transcrição.
+rede_local = false
+
+[local]
+# Se latitude/longitude ficarem comentadas, a cidade é localizada automaticamente.
+cidade = "São Paulo"
+pais = "BR"
+# latitude = -23.5505
+# longitude = -46.6333
+
+[widgets]
+moedas = ["USD-BRL", "EUR-BRL", "BTC-BRL"]
+
+[[widgets.feeds]]
+nome = "g1"
+url = "https://g1.globo.com/rss/g1/"
+
+[[widgets.feeds]]
+nome = "Agência Brasil"
+url = "https://agenciabrasil.ebc.com.br/rss/ultimasnoticias/feed.xml"
+
+[[widgets.feeds]]
+nome = "Folha"
+url = "https://feeds.folha.uol.com.br/emcimadahora/rss091.xml"
+
+[tela]
+fps_max = 60
+# Resolução interna do fundo animado (0.3 – 1.0). Menor = mais leve; o fundo é suave, 0.5 já fica ótimo.
+qualidade_fundo = 0.5
+
+[camera]
+# A câmera só detecta movimento (64×48 px, tudo no navegador). Nenhuma imagem é salva ou enviada.
+ativada = true
+# Sem ninguém se mexendo por este tempo, o painel entra em modo ambiente (mais discreto).
+ociosidade_minutos = 5
+
+[audio]
+ativado = true
+iniciar_mutado = false
+# Parte do nome do microfone (ex.: "USB"). Vazio = microfone padrão do Windows.
+microfone = ""
+# tiny | base | small | medium | large-v3-turbo   (na RTX 3070, "large-v3-turbo" roda bem)
+modelo_whisper = "small"
+# auto | cuda | cpu
+dispositivo_whisper = "auto"
+idioma = "pt"
+# A transcrição fica só na memória e é descartada depois deste tempo.
+retencao_minutos = 10
+# Muta sozinho quando outro app (Teams, Zoom, Meet no navegador...) estiver usando o microfone.
+mute_automatico = true
+# Aumente (ex.: 1.5) se ele não estiver captando falas mais baixas; diminua se captar ruído.
+sensibilidade = 1.0
+
+[ia]
+ollama_url = "http://localhost:11434"
+modelo = "gemma3:4b"
+intervalo_segundos = 40
+janela_minutos = 6
