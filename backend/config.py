@@ -21,7 +21,7 @@ PADRAO: dict = {
         "ativado": True,
         "iniciar_mutado": False,
         "microfone": "",
-        "modelo_whisper": "small",
+        "modelo_whisper": "auto",
         "dispositivo_whisper": "auto",
         "idioma": "pt",
         "retencao_minutos": 10,

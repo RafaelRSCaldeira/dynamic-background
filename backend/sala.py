@@ -1,10 +1,12 @@
 """Estado da "sala": mute, transcrição recente e insights gerados pela IA."""
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from collections import deque
 
+from . import modelos
 from .hub import Hub
 
 
@@ -12,7 +14,17 @@ class Sala:
     def __init__(self, hub: Hub, cfg_audio: dict, cfg_ia: dict) -> None:
         self.hub = hub
         self.cfg = cfg_audio
-        self.modelo_ia = cfg_ia["modelo"]
+        prefs = modelos.ler()
+        # escolhas feitas na tela (preferencias.json) valem mais que o config.toml
+        self.modelo_ia: str = prefs.get("modelo_ia") or cfg_ia["modelo"]
+        self.modelo_whisper: str = prefs.get("modelo_whisper") or cfg_audio["modelo_whisper"]
+        self.whisper_atual = ""        # modelo realmente carregado
+        self.whisper_carregando = ""   # modelo sendo carregado agora (transcrição pausada)
+        self.whisper_baixando = ""     # modelo baixando em segundo plano (o atual segue funcionando)
+        self.whisper_aviso = ""
+        self.whisper_dispositivo = ""  # cuda | cpu
+        self.acordar_ia: asyncio.Event | None = None  # criado pelo laço da IA
+        self.ao_trocar_whisper = None  # callback do serviço de áudio
         self._trava = threading.RLock()
 
         self.mutado_manual = bool(cfg_audio["iniciar_mutado"])
@@ -63,6 +75,12 @@ class Sala:
                     ia=self.ia,
                     ia_detalhe=self.ia_detalhe,
                     ia_modelo=self.modelo_ia,
+                    whisper_modelo=self.modelo_whisper,
+                    whisper_atual=self.whisper_atual,
+                    whisper_carregando=self.whisper_carregando,
+                    whisper_baixando=self.whisper_baixando,
+                    whisper_aviso=self.whisper_aviso,
+                    whisper_dispositivo=self.whisper_dispositivo,
                     linhas=list(self.linhas)[-6:],
                     insights=self.insights,
                     insights_em=self.insights_em,
@@ -85,9 +103,10 @@ class Sala:
             self.mutado_auto, self.motivo_auto = valor, motivo
         self.publicar()
 
-    def definir_motor(self, estado: str, detalhe: str = "") -> None:
+    def definir_motor(self, estado: str, detalhe: str = "", carregando: str = "") -> None:
         with self._trava:
             self.motor, self.motor_detalhe = estado, detalhe
+            self.whisper_carregando = carregando if estado == "carregando" else ""
         self.publicar()
 
     def definir_ia(self, estado: str, detalhe: str = "") -> None:
@@ -95,6 +114,38 @@ class Sala:
             if self.ia == estado and self.ia_detalhe == detalhe:
                 return
             self.ia, self.ia_detalhe = estado, detalhe
+        self.publicar()
+
+    def definir_modelo_ia(self, nome: str) -> None:
+        nome = (nome or "").strip()
+        if not nome or nome == self.modelo_ia:
+            return
+        with self._trava:
+            self.modelo_ia = nome
+            self.ia, self.ia_detalhe = "verificando", ""
+        modelos.gravar(modelo_ia=nome)
+        self.publicar()
+        if self.acordar_ia:
+            self.acordar_ia.set()  # gera insights de novo já com o modelo novo
+
+    def definir_modelo_whisper(self, nome: str) -> None:
+        if nome not in modelos.NOMES_WHISPER or nome == self.modelo_whisper:
+            return
+        with self._trava:
+            self.modelo_whisper = nome
+        modelos.gravar(modelo_whisper=nome)
+        self.publicar()
+        if self.ao_trocar_whisper:
+            self.ao_trocar_whisper(nome)
+
+    def definir_baixando(self, nome: str, aviso: str = "") -> None:
+        with self._trava:
+            self.whisper_baixando, self.whisper_aviso = nome, aviso
+        self.publicar()
+
+    def definir_whisper_carregado(self, nome: str, dispositivo: str) -> None:
+        with self._trava:
+            self.whisper_atual, self.whisper_dispositivo = nome, dispositivo
         self.publicar()
 
     def definir_insights(self, insights: dict) -> None:

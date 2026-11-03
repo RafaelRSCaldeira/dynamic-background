@@ -79,21 +79,38 @@ async def _verificar(cliente: httpx.AsyncClient, url: str, modelo: str) -> tuple
 
 async def executar(sala: Sala, cfg: dict) -> None:
     url = cfg["ollama_url"].rstrip("/")
-    modelo = cfg["modelo"]
     intervalo = max(10, int(cfg["intervalo_segundos"]))
     janela = float(cfg["janela_minutos"])
     ultima_versao = -1
+    ultimo_modelo = ""
+    acordar = sala.acordar_ia = asyncio.Event()
+
+    async def esperar(segundos: float) -> None:
+        # dorme, mas acorda na hora se alguém trocar o modelo na tela
+        try:
+            await asyncio.wait_for(acordar.wait(), segundos)
+        except asyncio.TimeoutError:
+            pass
+        acordar.clear()
 
     async with httpx.AsyncClient(timeout=180) as cliente:
         while True:
             sala.podar()
+            modelo = sala.modelo_ia
             ok, detalhe = await _verificar(cliente, url, modelo)
             if not ok:
                 sala.definir_ia("indisponivel", detalhe)
-                await asyncio.sleep(15)
+                await esperar(15)
                 continue
             if sala.ia in ("verificando", "indisponivel"):
                 sala.definir_ia("pronta")
+            if modelo != ultimo_modelo:
+                if ultimo_modelo:  # tira o modelo antigo da VRAM (ela é dividida com o Whisper)
+                    try:
+                        await cliente.post(f"{url}/api/generate", json={"model": ultimo_modelo, "keep_alive": 0}, timeout=10)
+                    except Exception:  # noqa: BLE001
+                        pass
+                ultima_versao, ultimo_modelo = -1, modelo  # modelo novo: refaz os destaques
 
             versao, texto = sala.texto_recente(janela)
             if versao != ultima_versao and len(texto.split()) >= 12:
@@ -116,11 +133,12 @@ async def executar(sala: Sala, cfg: dict) -> None:
                     r.raise_for_status()
                     dados = _limpar(json.loads(r.json()["message"]["content"]))
                     # só publica se ninguém pediu "esquecer" enquanto o modelo pensava
-                    if sala.versao >= versao and sala.texto_recente(janela)[1]:
+                    # ...e se o modelo não foi trocado no meio do caminho
+                    if sala.versao >= versao and sala.texto_recente(janela)[1] and sala.modelo_ia == modelo:
                         sala.definir_insights(dados)
                     ultima_versao = versao
                     sala.definir_ia("pronta")
                 except Exception as e:  # noqa: BLE001
-                    log.warning("Falha ao gerar insights: %s", e)
-                    sala.definir_ia("indisponivel", f"Erro no modelo: {e}"[:160])
-            await asyncio.sleep(intervalo)
+                    log.warning("Falha ao gerar insights com %s: %s", modelo, e)
+                    sala.definir_ia("indisponivel", f"Erro no modelo {modelo}: {e}"[:160])
+            await esperar(intervalo)

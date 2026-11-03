@@ -47,8 +47,9 @@ ativado = true
 iniciar_mutado = false
 # Parte do nome do microfone (ex.: "USB"). Vazio = microfone padrão do Windows.
 microfone = ""
-# tiny | base | small | medium | large-v3-turbo   (na RTX 3070, "large-v3-turbo" roda bem)
-modelo_whisper = "small"
+# auto | tiny | base | small | medium | large-v3-turbo | large-v3
+# "auto" = large-v3-turbo com GPU NVIDIA, small só com CPU. Também dá para trocar na tela (botão Ajustes).
+modelo_whisper = "auto"
 # auto | cuda | cpu
 dispositivo_whisper = "auto"
 idioma = "pt"
@@ -61,6 +62,7 @@ sensibilidade = 1.0
 
 [ia]
 ollama_url = "http://localhost:11434"
+# Modelo inicial. Qualquer modelo instalado no Ollama pode ser escolhido na tela (botão Ajustes).
 modelo = "gemma3:4b"
 intervalo_segundos = 40
 janela_minutos = 6

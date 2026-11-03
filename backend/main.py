@@ -7,24 +7,29 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import warnings
 
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+os.environ.setdefault("HF_HUB_VERBOSITY", "error")
+warnings.filterwarnings("ignore", message=".*unauthenticated requests.*")
 from contextlib import asynccontextmanager
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import dados, ia, privacidade
+from . import dados, ia, modelos, privacidade
 from .config import CONFIG, FRONTEND
 from .hub import Hub
 from .sala import Sala
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(name)-11s %(message)s", datefmt="%H:%M:%S")
-for ruidoso in ("httpx", "httpx2", "httpcore", "huggingface_hub", "faster_whisper"):
+for ruidoso in ("httpx", "httpx2", "httpcore", "faster_whisper"):
     logging.getLogger(ruidoso).setLevel(logging.WARNING)
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)  # "sem HF_TOKEN" não é problema aqui
 log = logging.getLogger("painel")
 
 hub = Hub()
@@ -104,6 +109,22 @@ async def api_noticias():
     return await _proteger(dados.noticias(app.state.http, CONFIG["widgets"]["feeds"]))
 
 
+@app.get("/api/modelos")
+async def api_modelos(request: Request):
+    # só a própria máquina vê e troca os modelos (o celular em /remote só muta)
+    if (request.client.host if request.client else "") not in LOCAIS:
+        raise HTTPException(403, "Disponível só no computador do painel")
+    return {
+        "ollama": await modelos.listar_ollama(app.state.http, CONFIG["ia"]["ollama_url"]),
+        "ia_atual": sala.modelo_ia,
+        "whisper": modelos.catalogo_whisper(),
+        "whisper_modelo": sala.modelo_whisper,
+        "whisper_atual": sala.whisper_atual,
+        "whisper_dispositivo": sala.whisper_dispositivo,
+        "audio": CONFIG["audio"]["ativado"],
+    }
+
+
 @app.websocket("/ws")
 async def ws(websocket: WebSocket):
     local = (websocket.client.host if websocket.client else "") in LOCAIS
@@ -118,6 +139,10 @@ async def ws(websocket: WebSocket):
                 sala.definir_mute(msg.get("valor"))
             elif acao == "esquecer":
                 sala.esquecer()
+            elif acao == "modelo_ia" and local:
+                sala.definir_modelo_ia(str(msg.get("nome") or ""))
+            elif acao == "modelo_whisper" and local:
+                sala.definir_modelo_whisper(str(msg.get("nome") or ""))
     except (WebSocketDisconnect, RuntimeError, ValueError):
         pass
     finally:
