@@ -34,7 +34,7 @@ export function iniciar(el, { enviar }) {
     </div>
     <div class="sala-ao-vivo"></div>
     <footer class="sala-rodape">
-      <span class="sala-ia"></span>
+      <button class="sala-ia" title="Trocar modelos (A)"></button>
       <button class="sala-esquecer" title="Apaga a transcrição e os destaques da memória">${mini.borracha}<span>Esquecer</span></button>
     </footer>`;
 
@@ -45,6 +45,7 @@ export function iniciar(el, { enviar }) {
   const cardsVistos = new Set();
 
   botao.addEventListener('click', () => enviar({ acao: 'mute' }));
+  $('.sala-ia').addEventListener('click', () => bus.emit('abrir-ajustes'));
   $('.sala-esquecer').addEventListener('click', () => {
     enviar({ acao: 'esquecer' });
     el.classList.add('apagando'); setTimeout(() => el.classList.remove('apagando'), 700);
@@ -91,7 +92,7 @@ export function iniciar(el, { enviar }) {
     const ia = estado.ia;
     let t = '';
     if (ia === 'pensando') t = `<i class="ponto pulsa"></i> Analisando a conversa…`;
-    else if (ia === 'indisponivel') t = `IA local offline`;
+    else if (ia === 'indisponivel') t = `IA local offline · ${esc(estado.ia_modelo || '')}`;
     else if (estado.insights_em) t = `${esc(estado.ia_modelo || 'IA local')} · ${relativo(Date.now() / 1000 - estado.insights_em)}`;
     else if (ia === 'pronta') t = `${esc(estado.ia_modelo || 'IA local')} · pronta`;
     $('.sala-ia').innerHTML = t;

@@ -13,15 +13,16 @@ import * as ceu from './widgets/ceu.js';
 import * as mercado from './widgets/mercado.js';
 import * as noticias from './widgets/noticias.js';
 import * as sala from './widgets/sala.js';
+import { iniciarAjustes } from './ajustes.js';
 
 const cfg = await getJSON('/api/config').catch(() => ({ tela: {}, camera: { ativada: false } }));
 const W = nome => document.querySelector(`[data-w="${nome}"]`);
 
 // ── Conexão em tempo real ───────────────────────────────────
-let widgetSala;
+let widgetSala, ajustes;
 const conexao = conectar(
   msg => {
-    if (msg.tipo === 'sala') widgetSala.estado(msg);
+    if (msg.tipo === 'sala') { widgetSala.estado(msg); ajustes?.estado(msg); }
     else if (msg.tipo === 'nivel') widgetSala.nivel(msg.v);
   },
   ok => widgetSala.conexao(ok),
@@ -88,7 +89,7 @@ addEventListener('pointermove', e => {
   if (!pendente) { pendente = true; requestAnimationFrame(atualizarCards); }
 });
 addEventListener('pointerdown', e => {
-  if (e.target.closest('button')) return;
+  if (e.target.closest('button, dialog')) return;
   cena.clique = { x: e.clientX / innerWidth, y: 1 - e.clientY / innerHeight, idade: 0 };
   particulas.explosao(e.clientX, e.clientY);
 });
@@ -130,17 +131,28 @@ btnCamera.addEventListener('click', alternarCamera);
 pintarBotaoCamera();
 if (cfg.camera?.ativada && guardar.ler('camera', true)) camera.ligar().then(pintarBotaoCamera);
 
+// ── Ajustes (modelos e câmera) ──────────────────────────────
+ajustes = iniciarAjustes({
+  enviar: conexao.enviar, camera, alternarCamera,
+  ociosidadeMin: cfg.camera?.ociosidade_minutos ?? 5,
+});
+const btnAjustes = document.getElementById('btn-ajustes');
+btnAjustes.innerHTML = mini.ajustes;
+btnAjustes.addEventListener('click', ajustes.abrir);
+if (location.hash === '#ajustes') ajustes.abrir();   // link direto: http://127.0.0.1:8765/#ajustes
+
 // ── Tela cheia, cursor, atalhos ─────────────────────────────
 const btnTela = document.getElementById('btn-tela');
 btnTela.innerHTML = mini.telaCheia;
 const telaCheia = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.().catch(() => {});
 btnTela.addEventListener('click', telaCheia);
 addEventListener('keydown', e => {
-  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  if (e.ctrlKey || e.altKey || e.metaKey || ajustes.aberto) return;
   const k = e.key.toLowerCase();
   if (k === 'm') conexao.enviar({ acao: 'mute' });
   else if (k === 'c') alternarCamera();
   else if (k === 'f') telaCheia();
+  else if (k === 'a') ajustes.abrir();
 });
 
 // ── Laço de animação ────────────────────────────────────────
