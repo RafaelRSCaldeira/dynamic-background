@@ -21,7 +21,8 @@ if sem_gil:
     problemas.append("Python 'free-threaded' (3.xt) não é suportado")
 
 if not problemas and "--deps" in sys.argv:
-    for modulo in ("fastapi", "uvicorn", "httpx", "numpy", "sounddevice", "faster_whisper", "ctranslate2", "onnxruntime"):
+    for modulo in ("fastapi", "uvicorn", "httpx", "numpy", "sounddevice", "faster_whisper", "ctranslate2", "onnxruntime",
+                   "PIL", "kokoro_onnx"):
         try:
             __import__(modulo)
         except Exception as e:  # noqa: BLE001
