@@ -58,7 +58,7 @@ Com a câmera ligada, a mão de quem está na frente da tela vira uma **constela
 | Gesto | O que acontece |
 |---|---|
 | 👋 Acenar | O painel dá oi e mostra o guia de gestos |
-| 🫲 Deslizar a mão para o lado | **Modo destaque:** traz um card grande para o centro; cada deslize mostra o próximo |
+| 🫲 Parar a mão e deslizar para o lado | **Modo destaque:** traz um card grande para o centro; cada deslize mostra o próximo |
 | 🖐️ Mão aberta para cima ou para baixo | Rola a lista da Sala |
 | ✊ Fechar a mão… ✋ e abrir | Junta energia (as partículas são puxadas para a mão) e solta uma explosão |
 | ☝️ Apontar ou fazer pinça | Desenha com luz no ar (o traço some em 4 s) |
@@ -68,6 +68,8 @@ Com a câmera ligada, a mão de quem está na frente da tela vira uma **constela
 | 👎 Polegar para baixo | Limpa tudo e volta ao normal |
 
 - Os gestos só valem para quem está a **menos de 2 m** da câmera (`distancia_gestos` no `config.toml`); quem passa ao fundo é ignorado, e quem tenta de longe recebe um aviso para chegar mais perto. A distância é estimada pelo tamanho real da mão e aparece em Ajustes; se não bater com a real, ajuste `campo_visao` (o ângulo da webcam).
+- **Só uma mão comanda:** a primeira que se levanta e faz algo. A outra mão parada e a de quem está do lado aparecem mais apagadas e não disparam nada. Outra mão só assume se a que comanda sair de cena, ficar largada por mais de 6 s ou se alguém chegar bem mais perto da câmera.
+- **Contra falsos positivos:** deslizar e rolar só valem depois de a mão parar por um instante, e a volta para a posição neutra logo depois de um deslize é ignorada. Gestos como 👍 e ✌️ precisam ser segurados com a mão parada (uma pose que aparece de passagem não conta). Um gesto de cada vez, com um pequeno intervalo entre eles, e baixar a mão para descansar não rola a lista.
 - Com a mão bem visível e o ambiente iluminado, o reconhecimento fica mais firme.
 - O reconhecimento roda num *worker* (fora da thread da página), então a animação não trava enquanto as mãos são analisadas.
 - A cena escolhida com ✌️ volta sozinha ao clima real depois de 4 minutos, e o destaque se fecha sozinho depois de pouco mais de 1 minuto.
