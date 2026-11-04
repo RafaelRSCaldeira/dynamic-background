@@ -11,9 +11,9 @@ Ouve a sala e mostra destaques da conversa gerados **localmente** (Whisper + Oll
 
 ## Como rodar
 
-1. **Ollama.** O `ollama.exe` deste PC está corrompido. Reinstale pelo site oficial e baixe o modelo:
+1. **Ollama.** Instale pelo site oficial e baixe um modelo (veja os recomendados na seção do Zak):
    ```powershell
-   ollama pull gemma3:4b
+   ollama pull qwen3:8b
    ```
 2. **Dependências.** Não rode `pip install` direto no terminal: o comando `pip` desta máquina aponta para o Python global (`C:\Python314`), que já tem outras versões de `onnxruntime` e `ctranslate2`. O `iniciar.bat` cria e confere sozinho o ambiente isolado `.venv`, com as versões compatíveis de `requirements.txt` (e as libs CUDA se houver placa NVIDIA). Se ele encontrar algo faltando ou em conflito, reinstala. Para instalar manualmente, use sempre `.venv\Scripts\python -m pip install -r requirements.txt`.
 3. **Iniciar.** Dê dois cliques em `iniciar.bat`. Ele sobe o servidor e abre o Edge em modo quiosque (tela cheia).
@@ -33,6 +33,7 @@ Para iniciar junto com o Windows, crie um atalho para `iniciar.bat` em `shell:st
 | Tecla | Ação |
 |---|---|
 | `M` | Mutar / ativar microfone |
+| `Z` | Digitar um pedido para o Zak (no modo Zak) |
 | `A` | Ajustes: modelo de transcrição, modelo do Ollama e câmera |
 | `C` | Ligar / desligar câmera |
 | `G` | Mostra o guia de gestos |
@@ -78,6 +79,49 @@ Com a câmera ligada, a mão de quem está na frente da tela vira uma **constela
 - Os gestos podem ser desligados em Ajustes. Sem eles, a câmera continua detectando movimento: quem se mexe "mexe" na aurora, e sem ninguém por `ociosidade_minutos` o painel entra em **modo ambiente**.
 - O reconhecimento de mãos usa o MediaPipe e roda **dentro do navegador**. Na primeira vez, o servidor baixa o modelo (~18 MB) para `cache/visao`; depois funciona offline.
 
+## Zak, o assistente da sala
+
+Em vez de acrescentar mais cards, **a tela inteira vira a cena do assunto** da conversa. Quando não há nada a mostrar, ela volta a um repouso quase vazio (hora, clima e o orbe do Zak). Tudo o que é IA roda neste computador: Whisper (ouvir), Ollama (pensar), Kokoro (falar) e, com GPU de 12 GB ou mais, Z-Image (imagens). A internet só é usada para buscar dados: fotos, Wikipédia, clima e rádio.
+
+Para usar: `[zak] ativado = true` no `config.toml`, ou abra `http://localhost:8765/?zak`.
+
+**Modo ambiente (sem ninguém chamar)**
+- A cada ~20 s, o Zak lê a conversa recente. Se houver um assunto claro e interessante (uma viagem, um projeto, uma tecnologia), a tela se transforma devagar na cena desse assunto: foto ou imagem gerada, cores tiradas dela e até 4 blocos de informação útil.
+- O assunto precisa aparecer em duas leituras seguidas (ou ser muito claro) para a tela mudar, e cada cena fica pelo menos 45 s. Assim a tela não fica pulando a cada frase. Se o assunto continua o mesmo, a cena continua; quando a conversa acaba, ela volta sozinha ao repouso.
+- Se a conversa é sobre um lugar, a cena ganha a hora local, que fica sempre certa, e o clima de lá agora (Open-Meteo).
+
+**Proteção de informação** (liga e desliga em Ajustes → Zak; ligada por padrão)
+- A tela mostra só o **tema**, nunca falas, nomes de pessoas, clientes ou números internos.
+- Assuntos pessoais ou delicados (RH, salário, demissão, saúde, vida pessoal, política, religião, finanças pessoais, segredos da empresa) **não aparecem**. A regra é aplicada duas vezes: a IA marca o assunto como sensível, e um filtro de palavras no servidor derruba a cena se algo escapar.
+- Ligar a proteção limpa na hora uma cena do ambiente que já estava na tela.
+- Com a proteção desligada, a cena pode listar pontos citados na conversa, mas continua sem nomes e sem assuntos sensíveis.
+
+**"Ei, Zak" (pedidos)**
+- Chame e faça o pedido na mesma frase: *"Ei, Zak, qual a altura do Everest?"*. Também dá para dizer só *"Ei, Zak"* e pedir na frase seguinte (ele espera 8 s, e o orbe mostra que está ouvindo). Ou digite: tecla `Z` ou clique no orbe.
+- O que ele faz:
+  - responde perguntas (com a cena da resposta na tela; quando não tem certeza, consulta a Wikipédia antes);
+  - **timer** ("coloca um timer de 10 minutos pro chá");
+  - **lembrete** ("me lembra às 15h de ligar pro fornecedor");
+  - **música** ("toca um jazz": uma rádio online gratuita do estilo, pela base aberta radio-browser.info), "para a música", "mais alto"/"mais baixo";
+  - **limpa a tela**;
+  - **para de ouvir** (é o mesmo que mutar).
+- Timers e lembretes sobrevivem a reiniciar o servidor (`cache/zak_agenda.json`) e aparecem como pílulas no canto, junto com a rádio tocando. Clique numa pílula para cancelar.
+- **Voz:** masculina pt-BR (Kokoro, voz `pm_alex`), gerada frase a frase para ele começar a falar logo. A legenda acende palavra por palavra no ritmo do áudio, e a música abaixa enquanto ele fala.
+- **Eco e interrupção:** enquanto o Zak fala, o que o microfone capta é descartado (é a voz dele saindo da caixa de som). Para interromper, chame pelo nome: *"Zak, para"*. Um viva-voz de conferência com cancelamento de eco ajuda muito.
+- O Whisper recebe "Ei, Zak" como palavra-chave (`hotwords`), o que faz ele escrever o nome certo. A detecção também aceita as grafias que ele costuma errar (Zack, Zeck, Eizek…), mas não reage a "zap".
+
+**Imagens**
+- **Fotos reais (coisas concretas):** o servidor busca no Wikimedia Commons, primeiro entre as fotos avaliadas como de qualidade pela comunidade. Ele descarta fundo branco chapado, mapas, diagramas, logos e fotos de baixa resolução, escuras ou estouradas demais. A foto fica em 4K em `cache/imagens`, se dissolve no fundo animado e tinge a cena com a paleta dela. O crédito (autor e licença) aparece no canto.
+- **Imagens geradas (ideias e atmosferas):** com o `requirements-imagem.txt` instalado e uma GPU de 12 GB ou mais, o Zak gera a imagem localmente com o **Z-Image-Turbo** (licença Apache 2.0, pode ser usado na empresa). O modelo roda num processo à parte, aberto na primeira imagem e fechado depois de 10 min sem uso, para devolver a VRAM ao Whisper e ao Ollama. Sem GPU suficiente, essas cenas ficam só com o fundo animado. Outro modelo: `[zak] imagem_modelo`.
+- O `iniciar.bat` instala a geração de imagens sozinho quando encontra uma placa com 12 GB ou mais.
+
+**Modelos recomendados**
+- **RTX 5090 (32 GB):** `qwen3:14b` (ou `gemma3:12b`) no Ollama + Whisper `large-v3-turbo` + Z-Image-Turbo cabem juntos. Com um modelo de ~30B (ex.: `qwen3:30b-a3b`), o gerador de imagens passa a dividir a VRAM com a RAM e fica mais lento.
+- **8 GB de VRAM:** `qwen3:8b` responde em ~10–20 s nesta configuração; as imagens geradas ficam desligadas.
+- O modelo é o mesmo da IA da Sala (Ajustes → IA da sala). Com só telas do Zak abertas, os cards da Sala não são gerados, e a GPU fica para ele.
+
+**Demonstração sem IA:** `http://localhost:8765/?zak&demo` mostra cenas de exemplo. Teclas: `1`–`5` mostram uma cena, `0` volta ao repouso e `espaço` pausa o ciclo; `?zak&demo=manual` só muda pelas teclas. Em qualquer modo, `←`/`→` (ou deslizar a mão) andam pelo histórico de cenas e `Esc` limpa a tela.
+
 ## Privacidade
 
 - **Mute fecha o microfone** de verdade, e o Windows deixa de mostrar o ícone de mic em uso. Se você mutar durante uma transcrição, o texto é descartado.
@@ -86,6 +130,7 @@ Com a câmera ligada, a mão de quem está na frente da tela vira uma **constela
 - **Retorno do microfone:** só existe na própria tela (o `/remote` não tem acesso) e só enquanto os Ajustes estão abertos. As últimas 6 frases ficam na memória para você ouvir e são apagadas ao fechar os Ajustes, mutar ou clicar em Esquecer.
 - **Câmera:** o movimento é detectado em 64×48 pixels em tons de cinza, e as mãos são reconhecidas pelo MediaPipe, tudo dentro do navegador. Nenhuma imagem é gravada nem sai do computador.
 - **Controle pelo celular:** com `rede_local = true` no `config.toml`, abra `http://<ip-do-pc>:8765/remote`. Clientes remotos recebem **apenas** o estado do microfone, nunca a transcrição nem os insights.
+- **Zak:** pedidos, respostas, cenas e a voz dele só vão para a própria tela (o `/remote` não recebe nada disso). A voz gerada fica só na memória. O que ele ouve segue as mesmas regras da transcrição: nada é gravado, e o mute fecha o microfone. Para a internet saem apenas termos de busca curtos (foto, Wikipédia, cidade do clima, estilo de rádio), nunca a conversa.
 - Avise as pessoas da sala de que existe escuta ativa. O indicador "Ouvindo" fica sempre visível.
 
 ## Configuração (`config.toml`)
@@ -119,8 +164,13 @@ backend/
   modelos.py       catálogo do Whisper, lista de modelos do Ollama, preferencias.json
   visao.py         baixa uma vez e serve o reconhecedor de mãos (cache/visao)
   retorno.py       retorno do microfone: ao vivo e as últimas frases como o Whisper ouviu
+  imagens.py       fotos das cenas do Zak: busca, filtro de qualidade, paleta e cache 4K
+  zak.py           Zak: modo ambiente, "Ei, Zak", eco, timers, lembretes, rádio e voz
+  zak_ia.py        prompts e limpeza do que o modelo devolve (cenas, ações, proteção de informação)
+  voz.py           texto → fala (Kokoro, local)
+  geracao.py       imagens geradas localmente (abre/fecha o processo geracao_worker.py)
 frontend/
-  index.html, css/style.css
+  index.html, css/style.css, css/zak.css
   js/main.js       orquestra cena, interação, câmera e atalhos
   js/ajustes.js    painel de Ajustes (microfone, modelos e câmera)
   js/retorno.js    retorno do microfone (seção dos Ajustes)
@@ -134,7 +184,12 @@ frontend/
   js/destaque.js   modo destaque (um card grande no centro)
   js/paleta.js     cores por hora do dia e clima
   js/widgets/*.js  um módulo por widget
+  js/zak/palco.js  palco do Zak: cena atual, foto, transições, histórico e contagens
+  js/zak/blocos.js vocabulário de blocos das cenas (o que a IA pode pedir)
+  js/zak/presenca.js  orbe do Zak (repouso, ouvindo, pensando, falando) e legenda da fala
+  js/zak/cliente.js  liga a tela ao Zak: voz, legenda, música, timers e o campo de pedido
+  js/zak/demo.js   cenas de exemplo (/?zak&demo)
   remote.html      controle de mute para o celular
 ```
 
-Fontes de dados, todas gratuitas e sem chave: Open-Meteo (clima, qualidade do ar, geocodificação), AwesomeAPI (câmbio), BrasilAPI (feriados) e RSS de g1, Agência Brasil e Folha.
+Fontes de dados, todas gratuitas e sem chave: Open-Meteo (clima, qualidade do ar, geocodificação), AwesomeAPI (câmbio), BrasilAPI (feriados), RSS de g1, Agência Brasil e Folha, e Wikimedia Commons (fotos das cenas do Zak), Wikipédia (respostas do Zak) e radio-browser.info (rádios).
