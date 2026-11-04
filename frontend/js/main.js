@@ -4,7 +4,9 @@ import { mini } from './icones.js';
 import { Fundo } from './fundo.js';
 import { Particulas } from './particulas.js';
 import { Camera } from './camera.js';
-import { paletaPara, noturno } from './paleta.js';
+import { paletaPara, paletaFixa, noturno } from './paleta.js';
+import { Brincar } from './brincar.js';
+import { Destaque } from './destaque.js';
 import * as relogio from './widgets/relogio.js';
 import * as agora from './widgets/agora.js';
 import * as horas from './widgets/horas.js';
@@ -53,12 +55,38 @@ const cena = {
   alvo: paletaPara(new Date(), null, null),
   tempestade: false, proximoRaio: 0,
 };
-let voz = 0;
+let voz = 0, brincar = null;
 bus.on('voz', v => { voz = v; if (v > .35) marcarPresenca(); });
+
+// cena escolhida por gesto (✌): vale por alguns minutos e depois volta ao clima real
+const CENA_FORCADA_MS = 4 * 60e3;
+let cenaForcada = null, cenaForcadaAte = 0;
+const CENAS_FIXAS = {
+  estrelas:   { paleta: () => paletaFixa('noite'), modo: 'estrelas' },
+  neve:       { paleta: () => paletaFixa('neve', .35), modo: 'neve', intensidade: .9 },
+  tempestade: { paleta: () => paletaFixa('tempestade', .4), modo: 'chuva', intensidade: 1, raios: true },
+  vagalumes:  { paleta: () => paletaFixa('floresta'), modo: 'vagalumes' },
+  magia:      { paleta: () => paletaFixa('magia', .1), modo: 'poeira', intensidade: 1 },
+};
+const forcarCena = id => {
+  cenaForcada = CENAS_FIXAS[id] ? id : null;
+  cenaForcadaAte = performance.now() + CENA_FORCADA_MS;
+  if (cenaForcada) cena.proximoRaio = 0;
+  atualizarCena();
+};
 
 const atualizarCena = () => {
   const d = bus.ultimo.clima;
   const agoraD = new Date();
+  if (cenaForcada && performance.now() > cenaForcadaAte) { cenaForcada = null; brincar?.cenaExpirou(); }
+  if (cenaForcada) {
+    const c = CENAS_FIXAS[cenaForcada];
+    cena.alvo = c.paleta();
+    cena.tempestade = !!c.raios;
+    particulas.definir(c.modo, { vento: .5, intensidade: c.intensidade ?? .6 });
+    document.documentElement.style.setProperty('--acento', cena.alvo.acento);
+    return;
+  }
   if (!d) { cena.alvo = paletaPara(agoraD, null, null); return; }
   const nascer = new Date(d.daily.sunrise[0]), por = new Date(d.daily.sunset[0]);
   const info = clima(d.current.weather_code, !!d.current.is_day);
@@ -122,20 +150,33 @@ const pintarBotaoCamera = () => {
   btnCamera.classList.toggle('ativo', camera.ativa);
   document.body.classList.toggle('camera-ativa', camera.ativa);
 };
+// ── Brincadeiras com as mãos (gestos) e modo destaque ───────
+const destaque = new Destaque();
+brincar = new Brincar({
+  camera, particulas, destaque,
+  onda: (x, y) => { cena.clique = { x, y, idade: 0 }; },
+  cena: forcarCena,
+});
+
 const alternarCamera = async () => {
   if (camera.ativa) camera.desligar(); else await camera.ligar();
   guardar.gravar('camera', camera.ativa);
   pintarBotaoCamera();
+  brincar.sincronizar();
 };
 btnCamera.addEventListener('click', alternarCamera);
 pintarBotaoCamera();
-if (cfg.camera?.ativada && guardar.ler('camera', true)) camera.ligar().then(pintarBotaoCamera);
+if (cfg.camera?.ativada && guardar.ler('camera', true)) camera.ligar().then(() => { pintarBotaoCamera(); brincar.sincronizar(); });
 
 // ── Ajustes (modelos e câmera) ──────────────────────────────
 ajustes = iniciarAjustes({
-  enviar: conexao.enviar, camera, alternarCamera,
+  enviar: conexao.enviar, camera, alternarCamera, brincar,
   ociosidadeMin: cfg.camera?.ociosidade_minutos ?? 5,
 });
+// links diretos para testar: /#destaque-semana, /?debug (registra os gestos no console)
+const ancora = location.hash.match(/^#destaque-(\w+)/);
+if (ancora) destaque.irPara(ancora[1]);
+if (new URLSearchParams(location.search).has('debug')) Object.assign(window, { __brincar: brincar, __destaque: destaque });
 const btnAjustes = document.getElementById('btn-ajustes');
 btnAjustes.innerHTML = mini.ajustes;
 btnAjustes.addEventListener('click', ajustes.abrir);
@@ -153,12 +194,18 @@ addEventListener('keydown', e => {
   else if (k === 'c') alternarCamera();
   else if (k === 'f') telaCheia();
   else if (k === 'a') ajustes.abrir();
+  else if (k === 'g') brincar.mostrarGuia();
+  else if (e.key === 'ArrowRight') destaque.ir(1);
+  else if (e.key === 'ArrowLeft') destaque.ir(-1);
+  else if (e.key === 'Escape') destaque.sair();
 });
 
 // ── Laço de animação ────────────────────────────────────────
 const fpsMax = cfg.tela?.fps_max || 60, quadroMin = 1000 / fpsMax;
 const ociosidade = (cfg.camera?.ociosidade_minutos ?? 5) * 60e3;
 let anterior = performance.now();
+// cor de acento atual em [r,g,b] (para os efeitos de luz combinarem com a paleta)
+const acentoRGB = () => (cena.alvo.acento.match(/\d+/g) || [140, 220, 215]).map(Number);
 
 function quadro(t) {
   requestAnimationFrame(quadro);
@@ -173,12 +220,16 @@ function quadro(t) {
   cena.p1.x = lerp(cena.p1.x, ponteiro.x / innerWidth, 1 - Math.exp(-dt * 6));
   cena.p1.y = lerp(cena.p1.y, 1 - ponteiro.y / innerHeight, 1 - Math.exp(-dt * 6));
 
-  // câmera: o centro do movimento vira um segundo "ponteiro"
+  // câmera: a mão (se houver) ou o centro do movimento vira um segundo "ponteiro"
   const mov = camera.ativa ? camera.movimento : 0;
-  cena.p2.forca = lerp(cena.p2.forca, clamp(mov * 3, 0, 1), 1 - Math.exp(-dt * 3));
-  cena.p2.x = lerp(cena.p2.x, camera.x, 1 - Math.exp(-dt * 4));
-  cena.p2.y = lerp(cena.p2.y, camera.y, 1 - Math.exp(-dt * 4));
+  const mao = brincar.quadro(dt, acentoRGB());
+  const alvo2 = mao ? { x: mao.x / innerWidth, y: 1 - mao.y / innerHeight, f: 1 } : { x: camera.x, y: camera.y, f: clamp(mov * 3, 0, 1) };
+  cena.p2.forca = lerp(cena.p2.forca, alvo2.f, 1 - Math.exp(-dt * (mao ? 8 : 3)));
+  cena.p2.x = lerp(cena.p2.x, alvo2.x, 1 - Math.exp(-dt * (mao ? 14 : 4)));
+  cena.p2.y = lerp(cena.p2.y, alvo2.y, 1 - Math.exp(-dt * (mao ? 14 : 4)));
   if (camera.ativa && camera.ultimoMovimento > presenca) presenca = camera.ultimoMovimento;
+  if (mao) presenca = t;
+  document.body.classList.toggle('com-maos', !!mao);
 
   // energia (voz + movimento) acelera o fluxo da aurora
   cena.energia = lerp(cena.energia, clamp(voz * .9 + mov * 1.5, 0, 1), 1 - Math.exp(-dt * 3));
@@ -196,7 +247,8 @@ function quadro(t) {
 
   fundo.desenhar(cena);
   const pts = [{ x: ponteiro.x, y: ponteiro.y, forca: cena.p1.forca }];
-  if (cena.p2.forca > .02) pts.push({ x: cena.p2.x * innerWidth, y: (1 - cena.p2.y) * innerHeight, forca: cena.p2.forca });
+  if (mao) pts.push(mao); // punho fechado: `atrair` puxa as partículas para a mão
+  else if (cena.p2.forca > .02) pts.push({ x: cena.p2.x * innerWidth, y: (1 - cena.p2.y) * innerHeight, forca: cena.p2.forca });
   particulas.quadro(dt, pts, t / 1000);
 
   // cursor some sozinho; modo ambiente quando ninguém está por perto (requer câmera)

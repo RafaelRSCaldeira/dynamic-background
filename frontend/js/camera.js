@@ -1,5 +1,5 @@
-// Detecção de movimento pela webcam — 100% no navegador.
-// Usa só 64×48 pixels em tons de cinza; nenhuma imagem é guardada ou enviada.
+// Webcam — 100% no navegador; nenhuma imagem é guardada ou enviada.
+// Aqui: detecção de movimento em 64×48 px, tons de cinza. As mãos/gestos ficam em maos.js.
 
 const W = 64, H = 48;
 
@@ -20,7 +20,8 @@ export class Camera {
   async ligar() {
     if (this.ativa) return true;
     try {
-      this._stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 15 } }, audio: false });
+      // 640×480: o reconhecimento de mãos precisa de detalhe; o detector de movimento reduz para 64×48
+      this._stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30 } }, audio: false });
     } catch (e) {
       console.warn('Câmera indisponível:', e.message);
       return false;
@@ -31,6 +32,8 @@ export class Camera {
     this._timer = setInterval(() => this._analisar(), 1000 / 15);
     return true;
   }
+
+  get video() { return this._video || null; }
 
   desligar() {
     clearInterval(this._timer);

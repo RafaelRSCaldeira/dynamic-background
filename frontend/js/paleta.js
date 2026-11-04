@@ -11,6 +11,9 @@ const P = {
   tempestade: ['#04030a', '#1b1330', '#3a2d60', '#8a7fd1'],
   neve:       ['#090e18', '#283750', '#7189ab', '#d5e2f2'],
   neblina:    ['#080a10', '#252c38', '#4a5566', '#9aa6b5'],
+  // cenas de brincadeira (gesto ✌)
+  floresta:   ['#020906', '#0a2a1c', '#1d6347', '#c9e86a'],
+  magia:      ['#09031a', '#36105e', '#b02f8f', '#ff9bd6'],
 };
 const PAL = Object.fromEntries(Object.entries(P).map(([k, v]) => [k, v.map(hex)]));
 
@@ -46,6 +49,13 @@ export function paletaPara(agora, nascer, por, cena = 'limpo') {
     case 'neve': nuvem = .4; cores = misturar(cores, PAL.neve, .55); break;
   }
   // acento de interface: o tom mais vivo, clareado
+  const a = cores[3].map(v => Math.round(lerp(v, 1, .35) * 255));
+  return { cores, nuvem, acento: `rgb(${a.join(',')})` };
+}
+
+/** Paleta fixa (sem depender da hora), usada nas cenas escolhidas por gesto. */
+export function paletaFixa(nome, nuvem = 0) {
+  const cores = PAL[nome] || PAL.noite;
   const a = cores[3].map(v => Math.round(lerp(v, 1, .35) * 255));
   return { cores, nuvem, acento: `rgb(${a.join(',')})` };
 }

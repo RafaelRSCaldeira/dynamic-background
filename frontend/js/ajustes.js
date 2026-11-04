@@ -3,8 +3,9 @@
 import { getJSON } from './api.js';
 import { esc, bus } from './util.js';
 import { mini } from './icones.js';
+import { GESTOS } from './brincar.js';
 
-export function iniciarAjustes({ enviar, camera, alternarCamera, ociosidadeMin = 5 }) {
+export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosidadeMin = 5 }) {
   const dlg = document.createElement('dialog');
   dlg.id = 'ajustes';
   dlg.setAttribute('aria-label', 'Ajustes');
@@ -27,13 +28,15 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, ociosidadeMin =
       </section>
       <section class="aj-secao">
         <div class="aj-titulo"><h3>Câmera</h3><button class="aj-mini" data-camera></button></div>
-        <p class="aj-ajuda">Ela só detecta <b>movimento</b> (64×48 px em tons de cinza, dentro do navegador; nenhuma imagem sai daqui):</p>
-        <ul class="aj-itens">
-          <li>Quem se mexe na frente da tela vira um segundo "ponteiro": a aurora gira e as partículas se afastam naquele ponto.</li>
-          <li>Um aceno amplo (braço inteiro) solta uma onda, como um clique.</li>
-          <li>Sem ninguém se mexendo por <b>${ociosidadeMin} min</b>, o painel entra em <b>modo ambiente</b> e fica discreto. Volta quando alguém aparece.</li>
-        </ul>
+        <p class="aj-ajuda">Tudo é processado dentro do navegador; nenhuma imagem é gravada ou sai deste computador.
+          Quem se mexe na frente da tela "mexe" na aurora, e sem ninguém por <b>${ociosidadeMin} min</b> o painel entra em <b>modo ambiente</b>.</p>
         <div class="aj-medidor" data-medidor><span>Movimento agora</span><div><i></i></div></div>
+      </section>
+      <section class="aj-secao">
+        <div class="aj-titulo"><h3>Brincar com as mãos</h3><button class="aj-mini" data-gestos></button></div>
+        <p class="aj-ajuda" data-gestos-status></p>
+        <ul class="aj-gestos">${GESTOS.map(([e, t, d]) => `<li><span>${e}</span><div><b>${t}</b><small>${d}</small></div></li>`).join('')}</ul>
+        <p class="aj-ajuda">Fique a 1–2 m da câmera, com a mão bem visível. Pelo teclado: <kbd>←</kbd> <kbd>→</kbd> trocam o destaque, <kbd>Esc</kbd> sai, <kbd>G</kbd> mostra o guia.</p>
       </section>
     </div>`;
   document.body.append(dlg);
@@ -123,6 +126,17 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, ociosidadeMin =
     b.innerHTML = `${camera.ativa ? mini.camera : mini.cameraOff}<span>${camera.ativa ? 'Ligada' : 'Desligada'}</span>`;
     b.classList.toggle('ativo', camera.ativa);
     $('[data-medidor]').classList.toggle('off', !camera.ativa);
+    if (!brincar) return;
+    const g = $('[data-gestos]');
+    g.innerHTML = `<span>${brincar.ativo ? 'Ligado' : 'Desligado'}</span>`;
+    g.classList.toggle('ativo', brincar.ativo);
+    const st = {
+      carregando: '<i class="aj-giro"></i> Carregando o reconhecedor de mãos (só na primeira vez demora mais)…',
+      pronto: brincar.presente ? '🖐️ Mão detectada agora — experimente um gesto!' : 'Pronto. Mostre a mão para a câmera.',
+      erro: `Reconhecimento de mãos indisponível: ${esc(brincar.maos.erro || '')}`,
+    }[brincar.estado];
+    $('[data-gestos-status]').innerHTML = !brincar.ativo ? 'Os gestos estão desligados.'
+      : !camera.ativa ? 'Ligue a câmera para brincar com as mãos.' : (st || '');
   };
 
   const render = () => { if (!dlg.open) return; renderWhisper(); renderOllama(); renderCamera(); };
@@ -142,6 +156,8 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, ociosidadeMin =
   });
   $('[data-atualizar]').addEventListener('click', buscar);
   $('[data-camera]').addEventListener('click', async () => { await alternarCamera(); renderCamera(); });
+  $('[data-gestos]').addEventListener('click', async () => { if (brincar) { const p = brincar.alternar(); renderCamera(); await p; renderCamera(); } });
+  if (brincar) brincar.aoEstado = () => { if (dlg.open) renderCamera(); };
   $('.aj-fechar').addEventListener('click', () => dlg.close());
   dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); }); // clique fora fecha
 
@@ -150,6 +166,8 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, ociosidadeMin =
   const medir = () => {
     if (!dlg.open) return;
     barra.style.transform = `scaleX(${camera.ativa ? Math.min(1, camera.movimento * 3).toFixed(3) : 0})`;
+    const presente = !!brincar?.presente;
+    if (presente !== medir.presente) { medir.presente = presente; renderCamera(); }
     requestAnimationFrame(medir);
   };
 

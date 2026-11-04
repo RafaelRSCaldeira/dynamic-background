@@ -14,14 +14,15 @@ export class Particulas {
     this.vento = 0;
     this.intensidade = 0.5;
     this.sprite = this._sprite();
+    this.spriteVagalume = this._sprite('255,236,140');
     this.redimensionar();
     addEventListener('resize', () => { this.redimensionar(); this._povoar(); });
   }
 
-  _sprite() {
+  _sprite(rgb = '255,255,255') {
     const s = document.createElement('canvas'); s.width = s.height = 64;
     const g = s.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-    gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(.35, 'rgba(255,255,255,.35)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    gr.addColorStop(0, `rgba(${rgb},1)`); gr.addColorStop(.35, `rgba(${rgb},.35)`); gr.addColorStop(1, `rgba(${rgb},0)`);
     g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
     return s;
   }
@@ -46,7 +47,7 @@ export class Particulas {
     const A = this.escalaArea, u = this.u, w = this.w, h = this.h;
     const n = {
       estrelas: 220 * A, poeira: 55 * A, chuva: (180 + 420 * this.intensidade) * A,
-      neve: (90 + 160 * this.intensidade) * A, neblina: 10,
+      neve: (90 + 160 * this.intensidade) * A, neblina: 10, vagalumes: 70 * A,
     }[this.modo] || 0;
     this.itens = Array.from({ length: Math.round(n) }, () => {
       const base = { x: rnd(0, w), y: rnd(0, h), vx: 0, vy: 0, ox: 0, oy: 0 };
@@ -56,6 +57,7 @@ export class Particulas {
         case 'chuva': return { ...base, comp: rnd(14, 30) * u, vy: rnd(900, 1400) * u, a: rnd(.12, .35) };
         case 'neve': return { ...base, r: rnd(1.2, 3.6) * u, vy: rnd(25, 70) * u, fase: rnd(0, 6.28), a: rnd(.4, .9) };
         case 'neblina': return { ...base, r: rnd(300, 650) * u, vx: rnd(6, 18) * u * (Math.random() < .5 ? -1 : 1), a: rnd(.03, .07) };
+        case 'vagalumes': return { ...base, r: rnd(5, 12) * u, fase: rnd(0, 6.28), vel: rnd(.5, 1.4), ang: rnd(0, 6.28), rapidez: rnd(14, 40) * u };
       }
       return base;
     });
@@ -67,9 +69,18 @@ export class Particulas {
     ctx.clearRect(0, 0, w, h);
     const raio = 170 * u;
 
-    // empurra partículas para longe dos ponteiros (com mola para voltar)
+    // empurra partículas para longe dos ponteiros (com mola para voltar).
+    // Ponteiro com `atrair` (punho fechado) faz o contrário: puxa tudo para perto.
     const repelir = p => {
       for (const q of ponteiros) {
+        if (q.atrair > .02) {
+          const R = raio * 3.2, dx = q.x - (p.x + p.ox), dy = q.y - (p.y + p.oy), d = Math.hypot(dx, dy);
+          if (d < R && d > 8 * u) {
+            const f = Math.min(d * .8, (1 - d / R) * q.atrair * 2600 * u * dt);
+            p.ox += dx / d * f; p.oy += dy / d * f;
+          }
+          continue;
+        }
         if (q.forca < .02) continue;
         const dx = p.x + p.ox - q.x, dy = p.y + p.oy - q.y, d2 = dx * dx + dy * dy;
         if (d2 < raio * raio && d2 > 1) {
@@ -132,6 +143,20 @@ export class Particulas {
         }
         break;
       }
+      case 'vagalumes': {
+        for (const p of this.itens) {
+          p.ang += (Math.sin(t * .7 + p.fase) * 1.6) * dt;
+          p.x += Math.cos(p.ang) * p.rapidez * dt; p.y += Math.sin(p.ang) * p.rapidez * dt * .7;
+          if (p.x < -20) p.x = w + 20; else if (p.x > w + 20) p.x = -20;
+          if (p.y < -20) p.y = h + 20; else if (p.y > h + 20) p.y = -20;
+          repelir(p);
+          const brilho = Math.max(0, Math.sin(t * p.vel * 2 + p.fase)) ** 3;
+          ctx.globalAlpha = .08 + .9 * brilho;
+          const r = p.r * (1.6 + brilho);
+          ctx.drawImage(this.spriteVagalume, p.x + p.ox - r, p.y + p.oy - r, r * 2, r * 2);
+        }
+        break;
+      }
       case 'neblina': {
         for (const p of this.itens) {
           p.x += p.vx * dt;
@@ -164,13 +189,13 @@ export class Particulas {
     });
   }
 
-  explosao(x, y) {
-    // ao clicar: empurrão forte nas partículas próximas
-    const u = this.u, raio = 320 * u;
+  explosao(x, y, forca = 1) {
+    // ao clicar: empurrão forte nas partículas próximas (forca > 1 = explosão do punho)
+    const u = this.u, raio = 320 * u * (0.6 + forca * 0.5);
     for (const p of this.itens) {
       if (p.ox === undefined) continue;
-      const dx = p.x - x, dy = p.y - y, d = Math.hypot(dx, dy);
-      if (d < raio && d > 1) { const f = (1 - d / raio) * 140 * u; p.ox += dx / d * f; p.oy += dy / d * f; }
+      const px = p.x + p.ox, py = p.y + p.oy, dx = px - x, dy = py - y, d = Math.hypot(dx, dy);
+      if (d < raio && d > 1) { const f = (1 - d / raio) * 140 * u * forca; p.ox += dx / d * f; p.oy += dy / d * f; }
     }
   }
 }

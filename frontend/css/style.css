@@ -487,6 +487,70 @@ body:not(.cursor-oculto) #controles { opacity: 1; transform: translate(-50%, 0);
 .aj-medidor div { height: .5rem; border-radius: 99px; background: rgba(255, 255, 255, .08); overflow: hidden; }
 .aj-medidor i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--acento), #fff); transform-origin: left; transform: scaleX(0); transition: transform .12s linear; }
 .aj-medidor.off { opacity: .35; }
+.aj-gestos { list-style: none; margin: .2rem 0 .9rem; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(14.5rem, 1fr)); gap: .45rem; }
+.aj-gestos li { display: flex; align-items: center; gap: .75rem; padding: .55rem .75rem; border-radius: .9rem; background: rgba(255, 255, 255, .035); border: 1px solid rgba(255, 255, 255, .06); }
+.aj-gestos li > span { font-size: 1.55rem; line-height: 1; flex: none; width: 2rem; text-align: center; }
+.aj-gestos b { display: block; font-size: .84rem; font-weight: 500; }
+.aj-gestos small { display: block; font-size: .74rem; color: var(--texto-3); line-height: 1.35; }
+
+/* ── Luzes dos gestos, aviso e guia ────────────────────────── */
+#luzes { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 4; pointer-events: none; }
+#aviso-gesto {
+  position: fixed; left: 50%; top: calc(var(--gap) * 1.4); z-index: 8; pointer-events: none;
+  display: flex; align-items: center; gap: .7rem; padding: .55rem 1.3rem .55rem .7rem; border-radius: 99px;
+  background: rgba(10, 14, 28, .6); border: 1px solid var(--borda); backdrop-filter: blur(14px);
+  font-size: 1.05rem; font-weight: 500; letter-spacing: -.01em;
+  opacity: 0; transform: translate(-50%, -1.5rem) scale(.9); transition: opacity .35s, transform .5s var(--ease);
+}
+#aviso-gesto.visivel { opacity: 1; transform: translate(-50%, 0) scale(1); }
+#aviso-gesto .ag-emoji { font-size: 1.9rem; line-height: 1; display: inline-block; }
+#aviso-gesto.visivel .ag-emoji { animation: ag-pular .7s var(--ease); }
+@keyframes ag-pular { 0% { transform: scale(.3) rotate(-20deg); } 60% { transform: scale(1.25) rotate(8deg); } }
+#guia-gestos {
+  position: fixed; left: 50%; bottom: calc(var(--gap) * 5); z-index: 8; pointer-events: none;
+  width: min(52rem, calc(100vw - var(--gap) * 2)); padding: 1.1rem 1.3rem 1.2rem; border-radius: var(--raio);
+  background: rgba(10, 14, 28, .72); border: 1px solid var(--borda); backdrop-filter: blur(1.6rem) saturate(150%);
+  box-shadow: 0 2rem 4rem -1rem rgba(0, 0, 0, .55);
+  opacity: 0; transform: translate(-50%, 2rem); transition: opacity .45s, transform .6s var(--ease);
+}
+#guia-gestos.visivel { opacity: 1; transform: translate(-50%, 0); }
+#guia-gestos h3 { margin: 0 0 .8rem; font-size: .78rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--acento); }
+#guia-gestos ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: .6rem 1rem; }
+#guia-gestos li { display: flex; align-items: center; gap: .7rem; }
+#guia-gestos li b { display: block; font-size: .86rem; font-weight: 500; }
+#guia-gestos li small { display: block; font-size: .74rem; line-height: 1.3; color: var(--texto-3); }
+.gg-emoji { font-size: 1.9rem; line-height: 1; flex: none; }
+@media (max-aspect-ratio: 1/1) { #guia-gestos ul { grid-template-columns: repeat(2, 1fr); } }
+
+/* ── Modo destaque (deslizar a mão ou ← →) ─────────────────── */
+body.destaque #painel > .card:not(.em-destaque) { opacity: .1; filter: blur(6px) saturate(.5); pointer-events: none; transition: opacity .5s, filter .5s; }
+#painel > .card.em-destaque {
+  position: fixed; z-index: 6; inset: 8vh 9vw 15vh; margin: 0;
+  --spot: 0;
+}
+#painel > .card.livre.em-destaque {
+  background: linear-gradient(155deg, var(--vidro-1), var(--vidro-2)); border-color: var(--borda);
+  backdrop-filter: blur(1.4rem) saturate(150%); -webkit-backdrop-filter: blur(1.4rem) saturate(150%);
+}
+@media (max-aspect-ratio: 4/5) { #painel > .card.em-destaque { inset: 10vh 4vw 16vh; } }
+::view-transition-group(dest-entra), ::view-transition-group(dest-sai) { animation-duration: .6s; animation-timing-function: cubic-bezier(.2, .8, .2, 1); }
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: .35s; }
+#destaque-nav {
+  position: fixed; left: 50%; bottom: calc(var(--gap) * 5.2); z-index: 7;
+  display: flex; align-items: center; gap: .6rem; padding: .45rem; border-radius: 99px;
+  background: rgba(10, 14, 28, .6); border: 1px solid var(--borda); backdrop-filter: blur(14px);
+  opacity: 0; pointer-events: none; transform: translate(-50%, 1rem); transition: opacity .4s, transform .5s var(--ease);
+}
+body.destaque #destaque-nav { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
+.dn-seta, .dn-sair { width: 2.4rem; height: 2.4rem; border-radius: 50%; border: 0; background: transparent; color: var(--texto-2); font: inherit; font-size: 1.5rem; line-height: 1; cursor: pointer; transition: background .3s, color .3s; }
+.dn-sair { font-size: 1rem; }
+.dn-seta:hover, .dn-sair:hover { background: rgba(255, 255, 255, .12); color: var(--texto); }
+.dn-meio { display: flex; flex-direction: column; align-items: center; gap: .35rem; min-width: 11rem; }
+.dn-meio b { font-size: .9rem; font-weight: 500; }
+.dn-pontos { display: flex; gap: .35rem; }
+.dn-pontos i { width: .4rem; height: .4rem; border-radius: 50%; background: rgba(255, 255, 255, .25); transition: background .3s, transform .3s; }
+.dn-pontos i.sel { background: var(--acento); transform: scale(1.4); }
+body.destaque #controles { opacity: 0 !important; pointer-events: none !important; }
 
 /* ── Modo ambiente (ninguém por perto) ─────────────────────── */
 .ambiente .card:not(.w-relogio):not(.w-sala) { opacity: .16; filter: blur(3px) saturate(.6); }
