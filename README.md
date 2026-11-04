@@ -34,6 +34,8 @@ Para iniciar junto com o Windows, crie um atalho para `iniciar.bat` em `shell:st
 | `M` | Mutar / ativar microfone |
 | `A` | Ajustes: modelo de transcrição, modelo do Ollama e câmera |
 | `C` | Ligar / desligar câmera |
+| `G` | Mostra o guia de gestos |
+| `←` `→` / `Esc` | Troca o card em destaque / sai do destaque |
 | `F` | Tela cheia (fora do modo quiosque) |
 | Clique | Onda no fundo |
 | Hover no gráfico de 24 h | Detalhes da hora |
@@ -47,19 +49,32 @@ Para iniciar junto com o Windows, crie um atalho para `iniciar.bat` em `shell:st
 - As escolhas ficam salvas em `preferencias.json` e valem mais que o `config.toml`. Apague o arquivo para voltar ao que está no `config.toml`.
 - Só o próprio computador pode trocar modelos; o celular em `/remote` continua apenas mutando.
 
-## Câmera
+## Câmera e gestos
 
-Ela detecta só **movimento**, sem reconhecer rostos nem gravar nada:
-- quem se mexe na frente da tela vira um segundo "ponteiro": a aurora gira e as partículas se afastam naquele ponto;
-- um aceno amplo, com o braço inteiro, solta uma onda, como um clique;
-- sem ninguém se mexendo por `ociosidade_minutos`, o painel entra em **modo ambiente** (mais discreto) e volta quando alguém aparece.
+Com a câmera ligada, a mão de quem está na frente da tela vira uma **constelação de estrelas** que segue os dedos, e alguns gestos fazem coisas:
+
+| Gesto | O que acontece |
+|---|---|
+| 👋 Acenar | O painel dá oi e mostra o guia de gestos |
+| 🫲 Deslizar a mão para o lado | **Modo destaque:** traz um card grande para o centro; cada deslize mostra o próximo |
+| ✊ Fechar a mão… ✋ e abrir | Junta energia (as partículas são puxadas para a mão) e solta uma explosão |
+| ☝️ Apontar ou fazer pinça | Desenha com luz no ar (o traço some em 4 s) |
+| 👍 Joinha | Fogos de artifício |
+| ✌️ Paz e amor | Troca a cena do fundo: noite estrelada, neve, tempestade, vaga-lumes, magia, clima real |
+| 🤟 Te amo | Chuva de corações |
+| 👎 Polegar para baixo | Limpa tudo e volta ao normal |
+
+- Funciona melhor a 1–2 m da câmera, com a mão bem visível e o ambiente iluminado.
+- A cena escolhida com ✌️ volta sozinha ao clima real depois de 4 minutos, e o destaque se fecha sozinho depois de pouco mais de 1 minuto.
+- Os gestos podem ser desligados em Ajustes. Sem eles, a câmera continua detectando movimento: quem se mexe "mexe" na aurora, e sem ninguém por `ociosidade_minutos` o painel entra em **modo ambiente**.
+- O reconhecimento de mãos usa o MediaPipe e roda **dentro do navegador**. Na primeira vez, o servidor baixa o modelo (~18 MB) para `cache/visao`; depois funciona offline.
 
 ## Privacidade
 
 - **Mute fecha o microfone** de verdade, e o Windows deixa de mostrar o ícone de mic em uso. Se você mutar durante uma transcrição, o texto é descartado.
 - **Mute automático:** quando Teams, Zoom, Meet (no navegador), Discord etc. estão usando o microfone, o painel muta sozinho. A detecção usa o registro de uso de microfone do próprio Windows.
 - **Nada é gravado em disco.** O áudio existe só na memória até ser transcrito. A transcrição fica na memória por `retencao_minutos` (10 por padrão). O botão **Esquecer** apaga tudo na hora.
-- **Câmera:** usa só 64×48 pixels em tons de cinza para detectar movimento, tudo dentro do navegador. Nenhuma imagem sai dele.
+- **Câmera:** o movimento é detectado em 64×48 pixels em tons de cinza, e as mãos são reconhecidas pelo MediaPipe, tudo dentro do navegador. Nenhuma imagem é gravada nem sai do computador.
 - **Controle pelo celular:** com `rede_local = true` no `config.toml`, abra `http://<ip-do-pc>:8765/remote`. Clientes remotos recebem **apenas** o estado do microfone, nunca a transcrição nem os insights.
 - Avise as pessoas da sala de que existe escuta ativa. O indicador "Ouvindo" fica sempre visível.
 
@@ -89,13 +104,18 @@ backend/
   sala.py          estado da sala: mute, transcrição em memória, insights
   dados.py         clima, ar, câmbio, feriados e notícias (APIs gratuitas, com cache)
   modelos.py       catálogo do Whisper, lista de modelos do Ollama, preferencias.json
+  visao.py         baixa uma vez e serve o reconhecedor de mãos (cache/visao)
 frontend/
   index.html, css/style.css
   js/main.js       orquestra cena, interação, câmera e atalhos
   js/ajustes.js    painel de Ajustes (modelos e câmera)
   js/fundo.js      shader da aurora (WebGL)
   js/particulas.js chuva, neve, estrelas, poeira e névoa
-  js/camera.js     detecção de movimento
+  js/camera.js     webcam e detecção de movimento
+  js/maos.js       mãos e gestos (MediaPipe): rastreio, deslizar, acenar, punho→explosão
+  js/luzes.js      efeitos de luz: constelação da mão, fogos, corações, desenho no ar
+  js/brincar.js    liga cada gesto ao seu efeito; aviso e guia de gestos
+  js/destaque.js   modo destaque (um card grande no centro)
   js/paleta.js     cores por hora do dia e clima
   js/widgets/*.js  um módulo por widget
   remote.html      controle de mute para o celular
