@@ -503,6 +503,12 @@ body:not(.cursor-oculto) #controles { opacity: 1; transform: translate(-50%, 0);
 .aj-medidor div { height: .5rem; border-radius: 99px; background: rgba(255, 255, 255, .08); overflow: hidden; }
 .aj-medidor i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--acento), #fff); transform-origin: left; transform: scaleX(0); transition: transform .12s linear; }
 .aj-medidor.off { opacity: .35; }
+.aj-diag { list-style: none; margin: -.3rem 0 .9rem; padding: 0; display: flex; flex-direction: column; gap: .35rem; font-size: .8rem; }
+.aj-diag:empty { display: none; }
+.aj-diag li { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .7rem; padding: .45rem .75rem; border-radius: .75rem; background: rgba(255, 255, 255, .035); }
+.aj-diag li.aj-meta { background: none; padding: 0 .1rem; }
+.aj-diag-mao { font-weight: 600; color: var(--acento); }
+.aj-diag b { font-weight: 500; color: var(--texto); }
 .aj-gestos { list-style: none; margin: .2rem 0 .9rem; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(14.5rem, 1fr)); gap: .45rem; }
 .aj-gestos li { display: flex; align-items: center; gap: .75rem; padding: .55rem .75rem; border-radius: .9rem; background: rgba(255, 255, 255, .035); border: 1px solid rgba(255, 255, 255, .06); }
 .aj-gestos li > span { font-size: 1.55rem; line-height: 1; flex: none; width: 2rem; text-align: center; }

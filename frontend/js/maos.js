@@ -162,6 +162,12 @@ export class Maos {
     pares.sort((p, q) => p.custo - q.custo);
     const casada = new Map();
     for (const p of pares) if (!casada.has(p.i) && !usadas.has(p.a)) { casada.set(p.i, p.a); usadas.add(p.a); }
+    // sobrou exatamente uma mão de cada lado (ex.: deslize rápido, a mão andou muito entre dois quadros): é a mesma
+    const soltasD = detectadas.map((_, i) => i).filter(i => !casada.has(i));
+    const soltasA = anteriores.filter(a => !usadas.has(a));
+    if (soltasD.length === 1 && soltasA.length === 1 && dist(soltasA[0].palma, detectadas[soltasD[0]].palma) < 0.9) {
+      casada.set(soltasD[0], soltasA[0]); usadas.add(soltasA[0]);
+    }
     for (const [i, d] of detectadas.entries()) {
       const m = casada.get(i) || this._novaMao(t);
       Object.assign(m, d, { visto: t });
@@ -212,8 +218,8 @@ export class Maos {
   /** Mão parada, aberta ou relaxada há um tempo = em repouso (a outra mão, ou alguém só assistindo). */
   _atualizarRepouso(m, t) {
     const neutra = m.bruto === 'None' || m.bruto === 'Open_Palm';
-    if (!neutra || extensao(m.hist, t, 350) > 0.06) { if (m.repouso || !m.acordouEm) m.acordouEm = t; m.repouso = false; }
-    else if (!m.repouso && t - m.nasceu > 1500 && extensao(m.hist, t, 1500) < 0.04) { m.repouso = true; m.acordouEm = 0; m.repousoDesde = t; }
+    if (!neutra || deriva(m.hist, t, 400) > 0.06) { if (m.repouso || !m.acordouEm) m.acordouEm = t; m.repouso = false; }
+    else if (!m.repouso && t - m.nasceu > 1500 && deriva(m.hist, t, 1500) < 0.04) { m.repouso = true; m.acordouEm = 0; m.repousoDesde = t; }
   }
 
   /** A mão que guia o "ponteiro" do fundo (aurora e partículas). Só isso: gestos valem para todas.
@@ -241,9 +247,12 @@ export class Maos {
 
     // "armada" = a mão parou por um instante. Movimentos (deslizar, rolar) só valem a partir daí:
     // assim a volta para a posição neutra, logo depois de um gesto, não conta como outro gesto.
-    if (extensao(m.hist, t, 300) < 0.035) {
-      if (!m.quietoDesde) m.quietoDesde = t;
-      if (t - m.quietoDesde >= 250) m.armado = true;
+    if (deriva(m.hist, t, 300) < 0.05 && caixa(m.hist, t, 300) < 0.1) {
+      // parada desde o ponto mais antigo da janela (com poucos quadros por segundo, não perde tempo)
+      if (!m.quietoDesde) m.quietoDesde = m.hist.find(h => t - h.t <= 300)?.t ?? t;
+      if (t - m.quietoDesde >= 150) m.armado = true;
+      m.ultimoQuieto = t;
+      if (m.retorno && !m.retorno.fim) m.retorno.fim = t;   // a mão parou no fim do deslize
     } else m.quietoDesde = 0;
     const livre = t - (this._ultimaAcao || 0) > 900;   // um gesto de cada vez
 
@@ -265,7 +274,7 @@ export class Maos {
     // ── gestos que disparam ações ao serem mantidos: precisa segurar PARADO ──
     // (uma pose que aparece de passagem, com a mão em movimento, não conta)
     const acao = ACOES[m.gesto];
-    if (acao && !m.disparado && livre && t - m.desde > SEGURAR_MS && extensao(m.hist, t, SEGURAR_MS) < 0.07) {
+    if (acao && !m.disparado && livre && t - m.desde > SEGURAR_MS && parada(m.hist, t, SEGURAR_MS)) {
       m.disparado = true; m.armado = false;
       this._acao(acao, { x: m.palma.x, y: m.palma.y }, 1500);
     }
@@ -274,6 +283,7 @@ export class Maos {
     const dedosAbertos = dist(m.pontos[12], m.pontos[0]) > 1.5 * m.tamanho;
     m.pincaConta = m.pinca && dedosAbertos && m.candidato !== 'Closed_Fist' ? m.pincaConta + 1 : 0;
     m.desenhando = m.gesto === 'Pointing_Up' || m.pincaConta >= 2;
+    if (m.desenhando) m.desenhouEm = t;
     if (m.gesto === 'Closed_Fist' || m.desenhando) { m.armado = false; m.pendente = null; return; }
 
     // movimento confirmado um instante depois: se a mão saiu por baixo (baixando para descansar), não vale
@@ -297,13 +307,20 @@ export class Maos {
       if (lado || vertical) {
         const eixo = lado ? 'x' : 'y', dir = Math.sign(lado ? dx : dy);
         // depois de um deslize, o primeiro movimento no sentido contrário é a mão voltando: ignora
-        const volta = m.retorno && m.retorno.eixo === eixo && m.retorno.dir === -dir && t - m.retorno.t < 2500;
+        // (se a mão ficou parada no fim por mais de ~1 s, é um deslize de propósito para o outro lado)
+        const volta = m.retorno && m.retorno.eixo === eixo && m.retorno.dir === -dir && t - m.retorno.t < 3000
+          && (!m.retorno.fim || (m.ultimoQuieto || 0) - m.retorno.fim < 900);
         if (volta) m.retorno = null;
-        else if (m.armado && livre) {
-          m.pendente = {
-            nome: lado ? 'deslizar' : 'rolar', eixo, dir, criado: t, ate: t + 180,
-            dados: lado ? { dir, y: m.palma.y } : { dir, x: m.palma.x, y: m.palma.y },
-          };
+        else if (!m.armado && m.gesto === 'Open_Palm' && t - m.nasceu > 1500 && t - (m.desenhouEm || 0) > 2000
+          && t - (this._ultimaAcao || 0) > 2500) {
+          this._emitir('dica', { texto: 'Pare a mão por um instante antes de deslizar' }, 15000);   // ensina a regra
+        } else if (m.armado && livre && lado) {
+          // para o lado vale na hora (mesmo que a mão saia da imagem no fim do movimento)
+          this._acao('deslizar', { dir, y: m.palma.y }, 850);
+          m.retorno = { eixo, dir, t };
+        } else if (m.armado && livre) {
+          // para cima/baixo espera um instante: se a mão saiu por baixo (baixando para descansar), não vale
+          m.pendente = { nome: 'rolar', eixo, dir, criado: t, ate: t + 180, dados: { dir, x: m.palma.x, y: m.palma.y } };
         }
         m.hist = [m.hist.at(-1)]; m.armado = false; m.quietoDesde = 0;
         return;
@@ -315,25 +332,42 @@ export class Maos {
       let viradas = 0, dirAnt = 0, ext = m.hist[0].x;
       for (const h of m.hist) {
         const d = h.x - ext;
-        if (Math.abs(d) > 0.035) {
+        if (Math.abs(d) > 0.06) {   // tremor não é aceno: cada ida/volta precisa de ~6% da tela
           const dir = Math.sign(d);
           if (dirAnt && dir !== dirAnt) viradas++;
           dirAnt = dir; ext = h.x;
         }
       }
       const xs = m.hist.map(h => h.x), amp = Math.max(...xs) - Math.min(...xs);
-      if (viradas >= 3 && amp < 0.3) { this._acao('oi', { x: m.palma.x, y: m.palma.y }, 6000); m.hist = [m.hist.at(-1)]; m.armado = false; }
+      if (viradas >= 3 && amp > 0.1 && amp < 0.35) { this._acao('oi', { x: m.palma.x, y: m.palma.y }, 6000); m.hist = [m.hist.at(-1)]; m.armado = false; }
     }
   }
 }
 
-/** Quanto a palma andou numa janela de tempo (diagonal da caixa que contém os pontos). */
-function extensao(hist, t, ms) {
-  let x0 = 1, x1 = 0, y0 = 1, y1 = 0, n = 0;
+/** Pose "segurada": sem deslocamento (deriva) e sem sacudir muito (o tremor normal passa;
+ *  gesticular, não). */
+function parada(hist, t, ms) {
+  return deriva(hist, t, ms) < 0.04 && caixa(hist, t, ms) < 0.12;
+}
+
+/** Tamanho da área por onde a palma passou na janela (pega idas e voltas, que a deriva não vê). */
+function caixa(hist, t, ms) {
+  let x0 = 1, x1 = 0, y0 = 1, y1 = 0;
   for (let i = hist.length - 1; i >= 0 && t - hist[i].t <= ms; i--) {
-    const h = hist[i]; n++;
-    if (h.x < x0) x0 = h.x; if (h.x > x1) x1 = h.x;
-    if (h.y < y0) y0 = h.y; if (h.y > y1) y1 = h.y;
+    const h = hist[i];
+    x0 = Math.min(x0, h.x); x1 = Math.max(x1, h.x); y0 = Math.min(y0, h.y); y1 = Math.max(y1, h.y);
   }
-  return n > 1 ? Math.hypot(x1 - x0, y1 - y0) : 0;
+  return x1 >= x0 ? Math.hypot(x1 - x0, y1 - y0) : 0;
+}
+
+/** Quanto a palma realmente se deslocou numa janela de tempo: compara a média do começo com a
+ *  média do fim da janela. O tremor natural da mão (e o ruído do detector) se anula na média;
+ *  só um movimento de verdade conta. */
+function deriva(hist, t, ms) {
+  const j = [];
+  for (let i = hist.length - 1; i >= 0 && t - hist[i].t <= ms; i--) j.push(hist[i]);
+  if (j.length < 2) return Infinity;   // um ponto só não diz se a mão está parada
+  const k = Math.ceil(j.length / 2);   // metade mais recente × metade mais antiga
+  const media = a => ({ x: a.reduce((s, h) => s + h.x, 0) / a.length, y: a.reduce((s, h) => s + h.y, 0) / a.length });
+  return dist(media(j.slice(0, k)), media(j.slice(j.length - k)));
 }

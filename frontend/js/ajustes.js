@@ -41,6 +41,7 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
       <section class="aj-secao">
         <div class="aj-titulo"><h3>Brincar com as mãos</h3><button class="aj-mini" data-gestos></button></div>
         <p class="aj-ajuda" data-gestos-status></p>
+        <ul class="aj-diag" data-gestos-diag aria-live="off"></ul>
         <ul class="aj-gestos">${GESTOS.map(([e, t, d]) => `<li><span>${e}</span><div><b>${t}</b><small>${d}</small></div></li>`).join('')}</ul>
         <p class="aj-ajuda">Os gestos só valem a menos de <b>${(brincar?.maos.distanciaMax ?? 2).toLocaleString('pt-BR')} m</b> da câmera (quem passa ao fundo é ignorado), com a mão bem visível. Pelo teclado: <kbd>←</kbd> <kbd>→</kbd> trocam o destaque, <kbd>Esc</kbd> sai, <kbd>G</kbd> mostra o guia.</p>
       </section>
@@ -174,12 +175,37 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
 
   // medidor de movimento ao vivo (mostra que a câmera está funcionando)
   const barra = $('[data-medidor] i');
+  // diagnóstico ao vivo: o que cada mão está fazendo e por que um gesto (não) dispara
+  const NOMES = { Open_Palm: '✋ mão aberta', Closed_Fist: '✊ punho', Pointing_Up: '☝️ apontando', Thumb_Up: '👍 joinha',
+    Thumb_Down: '👎 polegar para baixo', Victory: '✌️ paz e amor', ILoveYou: '🤟 te amo', None: '— sem gesto' };
+  const diagnostico = () => {
+    const ul = $('[data-gestos-diag]');
+    const M = brincar?.maos;
+    if (!M || !camera.ativa || !brincar.ativo || M.estado !== 'pronto') { ul.innerHTML = ''; return; }
+    const t = M._tQuadro || 0;
+    const maos = (M._rastreio || []).filter(m => t - m.visto < 300);
+    if (!maos.length) { ul.innerHTML = '<li class="aj-meta">Nenhuma mão na imagem agora.</li>'; return; }
+    const fmt = v => v.toLocaleString('pt-BR', { maximumFractionDigits: 1 });
+    ul.innerHTML = maos.map((m, i) => {
+      const estado = !m.perto ? `<b class="aj-erro">longe demais</b> (a mais de ${fmt(M.distanciaMax)} m: ignorada)`
+        : m.desenhando ? '<b>desenhando</b>'
+        : m.carga > .05 ? `<b>carregando</b> ${Math.round(m.carga * 100)}%`
+        : m.armado ? '<b>parada</b>: pronta para deslizar ou segurar um gesto'
+        : 'em movimento (pare um instante para deslizar)';
+      return `<li><span class="aj-diag-mao">Mão ${i + 1}${m.lado ? ` · ${m.lado === 'Left' ? 'esq.' : 'dir.'}` : ''}</span>
+        <span>${NOMES[m.gesto] || m.gesto}${m.metros ? ` · ~${fmt(m.metros)} m` : ''}</span>
+        <span class="aj-meta">${estado}</span></li>`;
+    }).join('') + (M.msAnalise ? `<li class="aj-meta">Análise: ${Math.round(1000 / Math.max(33, M.msAnalise))} quadros/s (${Math.round(M.msAnalise)} ms cada)</li>` : '');
+  };
+
   const medir = () => {
     if (!dlg.open) return;
     barra.style.transform = `scaleX(${camera.ativa ? Math.min(1, camera.movimento * 3).toFixed(3) : 0})`;
     // atualiza o status quando a mão aparece/some ou a distância muda (de 10 em 10 cm)
     const chave = `${!!brincar?.presente}|${brincar?.maos.distancia == null ? '' : Math.round(brincar.maos.distancia * 10)}`;
     if (chave !== medir.chave) { medir.chave = chave; renderCamera(); }
+    const agora = performance.now();
+    if (agora - (medir.diagEm || 0) > 250) { medir.diagEm = agora; diagnostico(); }
     requestAnimationFrame(medir);
   };
 

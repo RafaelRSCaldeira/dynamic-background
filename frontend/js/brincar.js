@@ -130,6 +130,9 @@ export class Brincar {
         bus.emit('rolar-sala', d.dir);
         this.avisar(d.dir < 0 ? '⬆️' : '⬇️', d.dir < 0 ? 'Lista da Sala: mais antigos' : 'Lista da Sala: mais recentes', 1300);
         break;
+      case 'dica':
+        this.avisar('✋', d.texto, 2600);
+        break;
       case 'longe':
         this.avisar('🚶', `Chegue mais perto: os gestos valem a até ${this.maos.distanciaMax.toLocaleString('pt-BR')} m`, 3200);
         break;

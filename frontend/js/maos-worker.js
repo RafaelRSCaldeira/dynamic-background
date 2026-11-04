@@ -13,7 +13,7 @@ async function iniciar(preferido = 'CPU') {
   const arquivos = await FilesetResolver.forVisionTasks('/visao/wasm');
   const criar = delegate => GestureRecognizer.createFromOptions(arquivos, {
     baseOptions: { modelAssetPath: '/visao/gesture_recognizer.task', delegate },
-    runningMode: 'VIDEO', numHands: 3,  // a sua mão, a outra e a de quem estiver do lado: nenhuma "rouba" a vaga
+    runningMode: 'VIDEO', numHands: 2,
     minHandDetectionConfidence: 0.4, minHandPresenceConfidence: 0.4, minTrackingConfidence: 0.4,
   });
   const ordem = preferido === 'GPU' ? ['GPU', 'CPU'] : ['CPU', 'GPU'];
