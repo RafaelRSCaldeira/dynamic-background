@@ -46,6 +46,11 @@ Para iniciar junto com o Windows, crie um atalho para `iniciar.bat` em `shell:st
 ## Ajustes (botão ⚙ ou tecla `A`)
 
 - **Microfone e retorno:** escolha o microfone (pelo WASAPI, na taxa nativa do aparelho) veja o volume real em dB e ajuste o **ganho** (de −12 a +24 dB; vale para a detecção de fala, para o Whisper e para o retorno). **Ouvir ao vivo** toca o que o microfone capta (use fone de ouvido). Em **O que o Whisper ouviu**, cada uma das últimas frases pode ser ouvida exatamente como chegou à transcrição, ao lado do texto que saiu e de avisos como "muito baixo" ou "saturado". É o primeiro lugar para olhar quando a transcrição erra.
+- **Isolamento da voz** (na mesma seção, ou `[audio] isolamento`), trocado na hora:
+  - **Volume:** o jeito antigo. Qualquer som bem acima do ruído de fundo vira uma frase (teclado, porta e cadeira também).
+  - **Só voz** (padrão): um detector de voz neural (Silero VAD, o mesmo que já vem com o faster-whisper) decide quando alguém começa e para de falar. Num teste com 70 s de ruído de escritório sintético e 4 falas perto do microfone, o modo Volume mandou 10 frases ao Whisper, 3 delas só ruído; o Só voz mandou 7, nenhuma vazia, e o "Ei, Zak" chegou em 2,7 s em vez de 8,9 s (o barulho em volta segurava a frase aberta).
+  - **Voz sem ruído:** além do detector, um removedor de ruído neural (GTCRN, 0,5 MB, na CPU, baixado uma vez para `cache/isolamento`) limpa cada frase antes do Whisper. Vai uma mistura de 70% limpa e 30% original: a frase 100% limpa confundia o Whisper (erro de 3,7% → 9,8% com ruído forte), a mistura não piora (2,8% → 2,2%). Ajuda com ruído contínuo (ar-condicionado, ventilador); conversa ao fundo continua sendo voz e às vezes fica até mais nítida. Ouça o resultado no retorno.
+  - Nenhum modo separa quem está perto de quem está longe: conversa ao fundo também é voz. Para isso, o que mais ajuda é um microfone direcional (de conferência, USB) perto da tela.
 - **Idioma:** Português (pt-BR), English (en-US) ou Detectar automaticamente. Os destaques da IA continuam em português.
 - **Transcrição da fala:** escolha o modelo do Whisper, de `tiny` a `large-v3`. Se o modelo ainda não foi baixado, ele baixa em segundo plano enquanto o atual continua transcrevendo, e a troca acontece sozinha quando o download termina.
 - **IA da sala:** lista **todos** os modelos instalados no Ollama. Basta clicar para trocar. O modelo anterior é descarregado da VRAM, e os destaques são gerados de novo com o modelo escolhido. Modelos de embedding aparecem na lista, mas não podem ser escolhidos.
@@ -86,8 +91,8 @@ Em vez de acrescentar mais cards, **a tela inteira vira a cena do assunto** da c
 Para usar: `[zak] ativado = true` no `config.toml`, ou abra `http://localhost:8765/?zak`.
 
 **Modo ambiente (sem ninguém chamar)**
-- A cada ~20 s, o Zak lê a conversa recente. Se houver um assunto claro e interessante (uma viagem, um projeto, uma tecnologia), a tela se transforma devagar na cena desse assunto: foto ou imagem gerada, cores tiradas dela e até 4 blocos de informação útil.
-- O assunto precisa aparecer em duas leituras seguidas (ou ser muito claro) para a tela mudar, e cada cena fica pelo menos 45 s. Assim a tela não fica pulando a cada frase. Se o assunto continua o mesmo, a cena continua; quando a conversa acaba, ela volta sozinha ao repouso.
+- Assim que chega fala nova (no máximo a cada 8 s, `[zak] ambiente_segundos`), o Zak lê a conversa recente. Se der para identificar um assunto (uma viagem, um jogo, um projeto, um problema técnico), a tela se transforma na cena desse assunto: foto ou imagem gerada, cores tiradas dela e até 4 blocos de informação útil.
+- O assunto sai das falas dos últimos ~40 s; as anteriores servem só de contexto. Por isso, quando a conversa muda de assunto, a tela muda junto, já na primeira leitura. Cada cena fica pelo menos 12 s, para não piscar. Se o assunto continua, a cada ~35 s a tela mostra outro ângulo dele (outros fatos, outra foto). Quando a conversa acaba, ela volta sozinha ao repouso.
 - Se a conversa é sobre um lugar, a cena ganha a hora local, que fica sempre certa, e o clima de lá agora (Open-Meteo).
 
 **Proteção de informação** (liga e desliga em Ajustes → Zak; ligada por padrão)
@@ -108,11 +113,14 @@ Para usar: `[zak] ativado = true` no `config.toml`, ou abra `http://localhost:87
 - Timers e lembretes sobrevivem a reiniciar o servidor (`cache/zak_agenda.json`) e aparecem como pílulas no canto, junto com a rádio tocando. Clique numa pílula para cancelar.
 - **Voz:** masculina pt-BR (Kokoro, voz `pm_alex`), gerada frase a frase para ele começar a falar logo. A legenda acende palavra por palavra no ritmo do áudio, e a música abaixa enquanto ele fala.
 - **Eco e interrupção:** enquanto o Zak fala, o que o microfone capta é descartado (é a voz dele saindo da caixa de som). Para interromper, chame pelo nome: *"Zak, para"*. Um viva-voz de conferência com cancelamento de eco ajuda muito.
-- O Whisper recebe "Ei, Zak" como palavra-chave (`hotwords`), o que faz ele escrever o nome certo. A detecção também aceita as grafias que ele costuma errar (Zack, Zeck, Eizek…), mas não reage a "zap".
+- O Whisper recebe "Ei, Zak" como palavra-chave (`hotwords`), o que faz ele escrever o nome certo. A detecção também aceita as grafias que ele costuma errar, medidas com vozes sintéticas: "E Zak", "Eizaki", "Ozaki", "Oizak", "Ei, Isaac", "Eis aqui"… E não reage a frases comuns como "e aí", "o zelador", "o saque", "pois é", "zap" nem "Zé".
+- Falas curtas (menos de 3 s, como um "Ei, Zak." sozinho) são transcritas sem o contexto da conversa: nelas o Whisper às vezes "completava" a frase copiando o contexto, o que virava um pedido falso.
+- Comandos simples ("para a música", "limpa a tela", "cancela o timer", "aumenta o volume") são reconhecidos direto, sem passar pelo modelo: respondem na hora.
 
 **Imagens**
-- **Fotos reais (coisas concretas):** o servidor busca no Wikimedia Commons, primeiro entre as fotos avaliadas como de qualidade pela comunidade. Ele descarta fundo branco chapado, mapas, diagramas, logos e fotos de baixa resolução, escuras ou estouradas demais. A foto fica em 4K em `cache/imagens`, se dissolve no fundo animado e tinge a cena com a paleta dela. O crédito (autor e licença) aparece no canto.
-- **Imagens geradas (ideias e atmosferas):** com o `requirements-imagem.txt` instalado e uma GPU de 12 GB ou mais, o Zak gera a imagem localmente com o **Z-Image-Turbo** (licença Apache 2.0, pode ser usado na empresa). O modelo roda num processo à parte, aberto na primeira imagem e fechado depois de 10 min sem uso, para devolver a VRAM ao Whisper e ao Ollama. Sem GPU suficiente, essas cenas ficam só com o fundo animado. Outro modelo: `[zak] imagem_modelo`.
+- **Fotos reais:** toda cena pede uma foto (para ideias abstratas, um objeto que as simbolize: prazo → ampulheta). O servidor busca no Wikimedia Commons (primeiro entre as fotos avaliadas como de qualidade pela comunidade) e no Openverse (fotos com licença aberta do Flickr e de outras fontes; sem chave, então ele pausa a fonte por 15 min quando o limite estoura). Só valem fotos cujo título é do assunto: antes, fotos de destaque sem relação nenhuma apareciam no topo da busca. Ele descarta fundo branco chapado, mapas, diagramas, logos e fotos de baixa resolução, escuras ou estouradas demais. A foto fica em 4K em `cache/imagens`, se dissolve no fundo animado e tinge a cena com a paleta dela. O crédito (autor e licença) aparece no canto.
+- **Imagens geradas (ideias e atmosferas):** com o `requirements-imagem.txt` instalado e uma GPU de 12 GB ou mais, o Zak gera a imagem localmente com o **Z-Image-Turbo** (licença Apache 2.0, pode ser usado na empresa). O modelo roda num processo à parte, aberto na primeira imagem e fechado depois de 10 min sem uso, para devolver a VRAM ao Whisper e ao Ollama. Sem GPU suficiente, essas cenas ficam só com a foto ou o fundo animado. Outro modelo: `[zak] imagem_modelo`.
+  - O `iniciar.bat` instala a geração (PyTorch com CUDA + diffusers, ~4 GB) sozinho quando a GPU tem 12 GB ou mais, inclusive num `.venv` que já existia. Na primeira partida, o servidor baixa o modelo em segundo plano (vários GB; Ajustes → Zak mostra "imagens: baixando"). Enquanto isso, as cenas usam só fotos. O log (`logs\servidor-erros.log`) diz na partida se as imagens estão disponíveis e, se não estão, o motivo.
 - O `iniciar.bat` instala a geração de imagens sozinho quando encontra uma placa com 12 GB ou mais.
 
 **Modelos recomendados**
@@ -138,7 +146,7 @@ Para usar: `[zak] ativado = true` no `config.toml`, ou abra `http://localhost:87
 Os principais itens:
 - `[local] cidade`: a cidade é localizada automaticamente; também aceita `latitude`/`longitude`.
 - `[audio] modelo_whisper`: o padrão `auto` usa o `large-v3-turbo` com GPU NVIDIA e o `small` só com CPU. Também dá para trocar em Ajustes.
-- `[audio] sensibilidade`: aumente se falas baixas não forem captadas; diminua se ruído virar texto.
+- `[audio] sensibilidade`: aumente se falas baixas não forem captadas; diminua se ruído virar texto. Vale também para o detector de voz (sensibilidade 1 = probabilidade de voz de 0,5 para abrir uma frase).
 - `[ia] modelo`: o modelo inicial do Ollama; em Ajustes dá para escolher qualquer modelo instalado. Com 8 GB de VRAM, prefira modelos de até ~8B, porque o Whisper também usa a GPU (o `large-v3-turbo` ocupa ~1,6 GB).
 - `[tela] fps_max` / `qualidade_fundo`: reduza para economizar energia num painel 24/7.
 - `[camera] distancia_gestos` / `campo_visao`: até quantos metros os gestos valem e o ângulo de visão da webcam usado para estimar a distância.
@@ -164,6 +172,7 @@ backend/
   modelos.py       catálogo do Whisper, lista de modelos do Ollama, preferencias.json
   visao.py         baixa uma vez e serve o reconhecedor de mãos (cache/visao)
   retorno.py       retorno do microfone: ao vivo e as últimas frases como o Whisper ouviu
+  isolamento.py    isolamento da voz: detector de voz (Silero VAD) e removedor de ruído (GTCRN)
   imagens.py       fotos das cenas do Zak: busca, filtro de qualidade, paleta e cache 4K
   zak.py           Zak: modo ambiente, "Ei, Zak", eco, timers, lembretes, rádio e voz
   zak_ia.py        prompts e limpeza do que o modelo devolve (cenas, ações, proteção de informação)
@@ -192,4 +201,4 @@ frontend/
   remote.html      controle de mute para o celular
 ```
 
-Fontes de dados, todas gratuitas e sem chave: Open-Meteo (clima, qualidade do ar, geocodificação), AwesomeAPI (câmbio), BrasilAPI (feriados), RSS de g1, Agência Brasil e Folha, e Wikimedia Commons (fotos das cenas do Zak), Wikipédia (respostas do Zak) e radio-browser.info (rádios).
+Fontes de dados, todas gratuitas e sem chave: Open-Meteo (clima, qualidade do ar, geocodificação), AwesomeAPI (câmbio), BrasilAPI (feriados), RSS de g1, Agência Brasil e Folha, Wikimedia Commons e Openverse (fotos das cenas do Zak), Wikipédia (respostas do Zak) e radio-browser.info (rádios).

@@ -13,6 +13,7 @@ import logging
 import math
 import os
 import queue
+import re
 import site
 import threading
 import time
@@ -21,6 +22,7 @@ from collections import deque
 import numpy as np
 
 from . import modelos
+from .isolamento import DetectorVoz, RemovedorRuido
 from .retorno import retorno
 from .sala import Sala
 
@@ -32,6 +34,10 @@ PRE_FALA_MS = 500      # áudio guardado antes do início da fala (não corta a 
 SILENCIO_FIM_MS = 1000 # pausa que encerra uma frase; curta demais = frases picotadas e sem contexto
 SEGMENTO_MAX_MS = 28000  # o Whisper enxerga janelas de 30 s
 FALA_MIN_MS = 400
+VAD_INICIO = 0.5        # probabilidade de voz (Silero) que abre uma frase nos modos "voz"
+VAD_CONTINUA = 0.7      # ...e a fração dela que mantém a frase aberta (histerese)
+MISTURA_LIMPA = 0.7     # modo "voz_ruido": quanto da frase vai limpa para o Whisper (o resto, original)
+CONTEXTO_MIN_S = 3.0    # falas mais curtas que isso são transcritas sem o contexto da conversa
 
 # Frases que o Whisper costuma "alucinar" em silêncio/ruído
 ALUCINACOES = (
@@ -66,6 +72,23 @@ def _eh_alucinacao(texto: str) -> bool:
     if len(t) < 2 or t in SOZINHAS:
         return True
     return any(a in t for a in ALUCINACOES)
+
+
+def _palavras(s: str) -> list[str]:
+    return re.findall(r"\w+", s.lower())
+
+
+def _sem_eco_do_contexto(texto: str, contexto: str | None) -> str:
+    """Corta o trecho que o Whisper copiou do contexto (5+ palavras seguidas iguais às do prompt)."""
+    if not contexto or not texto:
+        return texto
+    ctx = " " + " ".join(_palavras(contexto)) + " "
+    tokens = list(re.finditer(r"\w+", texto))
+    n = 5
+    for i in range(len(tokens) - n + 1):
+        if " " + " ".join(t[0].lower() for t in tokens[i:i + n]) + " " in ctx:
+            return texto[:tokens[i].start()].strip(" ,.;:-")
+    return texto
 
 
 def _reamostrar(x: np.ndarray, de: int, para: int) -> np.ndarray:
@@ -112,8 +135,50 @@ class ServicoAudio:
         self._troca: str | None = None
         self._baixando = ""
         self._reabrir = False
+        self._detector: DetectorVoz | None = None
+        self._detector_falhou = False
+        self._modo_detector = ""
+        self.removedor = RemovedorRuido()
         sala.ao_trocar_whisper = self.trocar_modelo
         sala.ao_trocar_microfone = self._pedir_reabrir
+
+    def _prob_voz(self, bloco: np.ndarray) -> float | None:
+        """Probabilidade de voz do bloco (Silero), ou None no modo "volume" (ou se o detector não abrir)."""
+        modo = self.sala.isolamento
+        if modo == "volume" or self._detector_falhou:
+            self._modo_detector = modo
+            return None
+        if self._detector is None:
+            try:
+                self._detector = DetectorVoz()
+            except Exception as e:  # noqa: BLE001
+                self._detector_falhou = True
+                log.warning("Detector de voz indisponível (%s); usando o volume", e)
+                self.sala.definir_isolamento_detalhe(f"detector de voz indisponível: {e}"[:160])
+                return None
+        if modo != self._modo_detector:
+            self._detector.reiniciar()
+            self._modo_detector = modo
+        return self._detector.prob(_reamostrar(bloco, self.taxa_mic, TAXA))
+
+    def _remover_ruido(self, audio16: np.ndarray) -> np.ndarray:
+        """Modo "voz_ruido": a frase passa pelo GTCRN. Vai uma mistura (70% limpa, 30% original): limpa 100%,
+        os artefatos do removedor confundiam o Whisper (erro de 3,7% → 9,8% com ruído forte); a mistura não piora."""
+        r = self.removedor
+        if self.sala.isolamento != "voz_ruido":
+            return audio16
+        if not r.pronto:
+            r.preparar()
+            self.sala.definir_isolamento_detalhe(r.detalhe if r.estado != "pronto" else "")
+            if not r.pronto:
+                return audio16          # enquanto o modelo baixa/carrega, as frases seguem sem limpeza
+        try:
+            limpo = r.limpar(audio16)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Removedor de ruído falhou: %s", e)
+            return audio16
+        self.sala.definir_isolamento_detalhe("")
+        return (limpo * MISTURA_LIMPA + audio16 * (1 - MISTURA_LIMPA)).astype(np.float32)
 
     def _pedir_reabrir(self) -> None:
         self._reabrir = True  # a captura fecha e abre o microfone escolhido
@@ -271,6 +336,7 @@ class ServicoAudio:
             if self.sala.mutado:
                 continue
             audio16 = _reamostrar(audio, self.taxa_mic, TAXA)
+            audio16 = self._remover_ruido(audio16)
             pico = float(np.max(np.abs(audio16))) if len(audio16) else 0.0
             audio = _normalizar(audio16)
             ganho = float(np.max(np.abs(audio))) / pico if pico > 1e-4 else 1.0
@@ -279,6 +345,8 @@ class ServicoAudio:
             inicio = time.monotonic()
             try:
                 idioma = self.sala.idioma
+                # Em falas curtas ("Ei, Zak.") o Whisper às vezes "continua" copiando o contexto: sem contexto nelas.
+                contexto = self._contexto() if len(audio) > TAXA * CONTEXTO_MIN_S else None
                 partes, _ = self.modelo.transcribe(
                     audio,
                     language=None if idioma == "auto" else idioma,
@@ -286,7 +354,7 @@ class ServicoAudio:
                     vad_filter=True,
                     vad_parameters={"threshold": 0.4, "min_silence_duration_ms": 600, "speech_pad_ms": 400},
                     condition_on_previous_text=False,
-                    initial_prompt=self._contexto(),
+                    initial_prompt=contexto,
                     hotwords="Ei, Zak",          # ajuda o Whisper a escrever o nome do assistente certo
                     hallucination_silence_threshold=2.0,
                 )
@@ -300,7 +368,7 @@ class ServicoAudio:
                         descartes.append(f"{p.text.strip()} (repetição)")
                         continue
                     trechos.append(p.text.strip())
-                texto = " ".join(trechos).strip()
+                texto = _sem_eco_do_contexto(" ".join(trechos).strip(), contexto)
             except Exception as e:  # noqa: BLE001
                 log.warning("Erro na transcrição: %s", e)
                 continue
@@ -403,6 +471,7 @@ class ServicoAudio:
                     self._limpar_fila()
                     segmento, falando = [], False
                     pre_fala.clear()
+                    self._modo_detector = ""   # o detector recomeça sem a memória do áudio anterior
                     historico_rms.clear()
 
             # ── mute: fecha o microfone de verdade ──
@@ -414,6 +483,7 @@ class ServicoAudio:
                     self._limpar_fila()
                     segmento, falando = [], False
                     pre_fala.clear()
+                    self._modo_detector = ""   # o detector recomeça sem a memória do áudio anterior
                     hub.enviar_threadsafe({"tipo": "nivel", "v": 0})
                     retorno.limpar()
                     log.info("Microfone fechado (mute)")
@@ -452,14 +522,22 @@ class ServicoAudio:
                 acima_db = 20 * math.log10(rms / max(ruido, 1e-6))
                 hub.enviar_threadsafe({"tipo": "nivel", "v": round(min(1.0, max(0.0, (acima_db - 3) / 24)), 3)})
                 ultimo_nivel = agora
+            # é voz? modo "volume": som acima do ruído; modos "voz": o detector neural decide (teclado e porta não contam)
+            prob = self._prob_voz(bloco)
+            if prob is None:
+                comeca, continua = rms > limiar, rms > limiar * 0.8
+            else:
+                lim = min(0.85, max(0.25, VAD_INICIO / sens))
+                comeca, continua = prob >= lim, prob >= lim * VAD_CONTINUA
+
             if not falando:
                 pre_fala.append(bloco)
-                if rms > limiar:
+                if comeca:
                     falando, segmento, silencio_ms = True, list(pre_fala), 0
                 continue
 
             segmento.append(bloco)
-            silencio_ms = 0 if rms > limiar * 0.8 else silencio_ms + BLOCO_MS
+            silencio_ms = 0 if continua else silencio_ms + BLOCO_MS
             duracao = len(segmento) * BLOCO_MS
             if silencio_ms >= SILENCIO_FIM_MS or duracao >= SEGMENTO_MAX_MS:
                 if duracao - silencio_ms >= FALA_MIN_MS:

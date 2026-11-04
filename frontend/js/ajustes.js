@@ -29,6 +29,12 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
       <section class="aj-secao">
         <div class="aj-titulo"><h3>Microfone e retorno</h3></div>
         <p class="aj-ajuda">Se a transcrição está errando, comece por aqui: ouça o que chega ao Whisper. Áudio baixo, abafado, com eco ou ruído atrapalha qualquer modelo.</p>
+        <div class="aj-idiomas" role="radiogroup" aria-label="Isolamento da voz" data-isolamento>
+          <button role="radio" data-valor="volume"><b>Volume</b><small>qualquer som alto</small></button>
+          <button role="radio" data-valor="voz"><b>Só voz</b><small>detector neural</small></button>
+          <button role="radio" data-valor="voz_ruido"><b>Voz sem ruído</b><small>detector + limpeza</small></button>
+        </div>
+        <p class="aj-ajuda" data-isolamento-ajuda></p>
         <div data-retorno></div>
       </section>
       <section class="aj-secao">
@@ -65,7 +71,7 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
   const retorno = criarRetorno($('[data-retorno]'), { enviar });
   if (new URLSearchParams(location.search).has('debug')) window.__retorno = retorno;
 
-  let sala = {}, catalogo = null, buscando = false, pedidoWhisper = null, pedidoIdioma = null;
+  let sala = {}, catalogo = null, buscando = false, pedidoWhisper = null, pedidoIdioma = null, pedidoIsolamento = null;
 
   // ── dados ────────────────────────────────────────────────
   const buscar = async () => {
@@ -172,9 +178,30 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
     }
   };
 
-  const render = () => { if (!dlg.open) return; retorno.render(sala, catalogo?.microfones); renderIdioma(); renderWhisper(); renderOllama(); renderCamera(); };
+  const AJUDA_ISOLAMENTO = {
+    volume: 'Qualquer som bem acima do ruído de fundo vira uma frase para o Whisper: teclado, porta e cadeira também.',
+    voz: 'Um detector de voz neural decide quando alguém fala: teclado, porta, cadeira e ar-condicionado são ignorados. Recomendado.',
+    voz_ruido: 'Além do detector, um removedor de ruído neural limpa cada frase antes do Whisper. Ajuda com ruído contínuo; conversa ao fundo continua sendo voz.',
+  };
+  const renderIsolamento = () => {
+    const atual = pedidoIsolamento || sala.isolamento || 'voz';
+    for (const b of dlg.querySelectorAll('[data-isolamento] button')) {
+      const sel = b.dataset.valor === atual;
+      b.classList.toggle('sel', sel); b.setAttribute('aria-checked', sel);
+    }
+    $('[data-isolamento-ajuda]').innerHTML = `<b>Isolamento da voz.</b> ${AJUDA_ISOLAMENTO[atual]}`
+      + (sala.isolamento_detalhe ? ` <em>(${esc(sala.isolamento_detalhe)})</em>` : '');
+  };
+
+  const render = () => { if (!dlg.open) return; retorno.render(sala, catalogo?.microfones); renderIsolamento(); renderIdioma(); renderWhisper(); renderOllama(); renderCamera(); };
 
   // ── eventos ──────────────────────────────────────────────
+  $('[data-isolamento]').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    pedidoIsolamento = b.dataset.valor;
+    enviar({ acao: 'isolamento', valor: pedidoIsolamento });
+    renderIsolamento();
+  });
   $('[data-idioma]').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
     pedidoIdioma = b.dataset.valor;
@@ -275,6 +302,7 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
       sala = { ...sala, ...msg };
       if (pedidoWhisper && sala.whisper_modelo === pedidoWhisper) pedidoWhisper = null; // servidor confirmou
       if (pedidoIdioma && sala.idioma === pedidoIdioma) pedidoIdioma = null;
+      if (pedidoIsolamento && sala.isolamento === pedidoIsolamento) pedidoIsolamento = null;
       if (antes === 'carregando' && sala.estado !== 'carregando' && dlg.open) buscar(); // atualiza "Baixado"
       render();
     },

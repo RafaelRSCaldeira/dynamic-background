@@ -198,6 +198,8 @@ async def ws(websocket: WebSocket):
                 sala.definir_idioma(str(msg.get("valor") or ""))
             elif acao == "ganho_mic" and local:
                 sala.definir_ganho(msg.get("db") or 0)
+            elif acao == "isolamento" and local:
+                sala.definir_isolamento(str(msg.get("valor") or ""))
             # ── Zak (só a própria tela) ──
             elif acao == "zak_tela" and local:
                 telas_zak.add(websocket)
