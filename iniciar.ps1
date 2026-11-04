@@ -1,5 +1,5 @@
 ﻿# Inicia o Painel Ambiente: prepara o ambiente Python (.venv), sobe o servidor e abre a tela cheia.
-# Uso: dois cliques em iniciar.bat   |   Para sair do modo quiosque: Alt+F4
+# Uso: dois cliques em iniciar.bat   |   Para sair: Ajustes → Sair, ou Alt+F4
 # Opções: -SemNavegador (só o servidor)  -Reinstalar (recria o .venv do zero)
 param([switch]$SemNavegador, [switch]$Reinstalar)
 

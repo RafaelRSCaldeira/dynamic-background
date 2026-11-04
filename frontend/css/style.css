@@ -457,6 +457,13 @@ body:not(.cursor-oculto) #controles { opacity: 1; transform: translate(-50%, 0);
 .aj-topo { display: flex; align-items: center; justify-content: space-between; padding: 1rem 1rem 1rem var(--pad); border-bottom: 1px solid var(--borda); flex: none; }
 .aj-topo h2 { display: flex; align-items: center; gap: .6rem; margin: 0; font-size: 1.15rem; font-weight: 500; letter-spacing: -.01em; }
 .aj-topo h2 .ui { width: 1.25rem; height: 1.25rem; color: var(--acento); }
+.aj-acoes { display: flex; align-items: center; gap: .6rem; }
+.aj-sair .ui { width: 1em; height: 1em; }
+.aj-sair.confirmar { color: var(--alerta); border-color: color-mix(in srgb, var(--alerta) 55%, transparent); background: color-mix(in srgb, var(--alerta) 12%, transparent); }
+.aj-sair:disabled { opacity: .6; cursor: default; }
+.painel-desligado { position: fixed; inset: 0; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .6rem;
+  background: var(--fundo, #05070c); color: var(--texto); font-size: 1.4rem; text-align: center; padding: 16px; }
+.painel-desligado span { font-size: .95rem; color: var(--texto-3); }
 .aj-rolagem { overflow-y: auto; padding: .4rem var(--pad) var(--pad); scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .15) transparent; }
 .aj-secao { padding: 1.1rem 0 .4rem; }
 .aj-secao + .aj-secao { border-top: 1px solid rgba(255, 255, 255, .06); }

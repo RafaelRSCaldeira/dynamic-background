@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import subprocess
 import warnings
 
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
@@ -200,6 +201,8 @@ async def ws(websocket: WebSocket):
                 sala.definir_ganho(msg.get("db") or 0)
             elif acao == "isolamento" and local:
                 sala.definir_isolamento(str(msg.get("valor") or ""))
+            elif acao == "sair" and local:   # botão Sair dos Ajustes (o celular em /remote não desliga o painel)
+                asyncio.create_task(desligar())
             # ── Zak (só a própria tela) ──
             elif acao == "zak_tela" and local:
                 telas_zak.add(websocket)
@@ -283,6 +286,28 @@ async def api_zak_audio(chave: str, request: Request):
 @app.get("/visao/{caminho:path}")
 async def api_visao(caminho: str):
     return await visao.servir(app.state.http, caminho)
+
+
+async def desligar() -> None:
+    """Fecha o Edge em tela cheia aberto pelo iniciar.bat (só o do perfil do painel) e encerra o servidor."""
+    log.info("Saindo: pedido pela tela (Ajustes → Sair)")
+    await asyncio.sleep(0.8)   # a tela ainda mostra "Saindo…"
+    perfil = os.path.join(os.environ.get("LOCALAPPDATA", ""), "PainelAmbiente", "edge")
+    if os.name == "nt" and os.environ.get("LOCALAPPDATA"):
+        comando = ("Get-CimInstance Win32_Process -Filter \"Name='msedge.exe'\" | "
+                   f"Where-Object {{ $_.CommandLine -like '*{perfil}*' }} | "
+                   "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }")
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "powershell", "-NoProfile", "-Command", comando,
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            await asyncio.wait_for(proc.wait(), 15)
+        except Exception as e:  # noqa: BLE001
+            log.warning("Não consegui fechar o navegador: %s", e)
+    zak.gerador.fechar()
+    await asyncio.sleep(0.3)
+    os._exit(0)   # o microfone e a GPU são liberados com o processo
 
 
 @app.get("/remote")

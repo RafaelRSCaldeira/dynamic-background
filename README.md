@@ -17,7 +17,7 @@ Ouve a sala e mostra destaques da conversa gerados **localmente** (Whisper + Oll
    ```
 2. **Dependências.** Não rode `pip install` direto no terminal: o comando `pip` desta máquina aponta para o Python global (`C:\Python314`), que já tem outras versões de `onnxruntime` e `ctranslate2`. O `iniciar.bat` cria e confere sozinho o ambiente isolado `.venv`, com as versões compatíveis de `requirements.txt` (e as libs CUDA se houver placa NVIDIA). Se ele encontrar algo faltando ou em conflito, reinstala. Para instalar manualmente, use sempre `.venv\Scripts\python -m pip install -r requirements.txt`.
 3. **Iniciar.** Dê dois cliques em `iniciar.bat`. Ele sobe o servidor e abre o Edge em modo quiosque (tela cheia).
-   Para sair, use **Alt+F4**.
+   Para sair, use **Ajustes → Sair** (clique duas vezes: o segundo confirma) ou **Alt+F4**. O Sair fecha a tela cheia e desliga o servidor; pelo celular (`/remote`) não dá para desligar.
 
    Se preferir abrir manualmente, rode `.venv\Scripts\python -m backend.main` e acesse `http://localhost:8765`.
 

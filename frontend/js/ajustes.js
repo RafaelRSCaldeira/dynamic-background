@@ -14,7 +14,10 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
   dlg.innerHTML = `
     <header class="aj-topo">
       <h2>${mini.ajustes}<span>Ajustes</span></h2>
-      <button class="aj-fechar ctl" title="Fechar (Esc)">${mini.fechar}</button>
+      <div class="aj-acoes">
+        <button class="aj-mini aj-sair" title="Fecha a tela cheia e desliga o painel (o mesmo que Alt+F4)">${mini.sair}<span>Sair</span></button>
+        <button class="aj-fechar ctl" title="Fechar (Esc)">${mini.fechar}</button>
+      </div>
     </header>
     <div class="aj-rolagem">
       <section class="aj-secao" data-zak-secao hidden>
@@ -225,6 +228,27 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
   $('[data-gestos]').addEventListener('click', async () => { if (brincar) { const p = brincar.alternar(); renderCamera(); await p; renderCamera(); } });
   if (brincar) brincar.aoEstado = () => { if (dlg.open) renderCamera(); };
   $('.aj-fechar').addEventListener('click', () => dlg.close());
+
+  // Sair: o primeiro clique pede confirmação; o segundo pede ao servidor para fechar a tela cheia e desligar
+  let confirmarSair = 0;
+  const botaoSair = $('.aj-sair');
+  const rotuloSair = t => { botaoSair.querySelector('span').textContent = t; };
+  botaoSair.addEventListener('click', () => {
+    if (!confirmarSair) {
+      botaoSair.classList.add('confirmar'); rotuloSair('Confirmar saída');
+      confirmarSair = setTimeout(() => { confirmarSair = 0; botaoSair.classList.remove('confirmar'); rotuloSair('Sair'); }, 4000);
+      return;
+    }
+    clearTimeout(confirmarSair);
+    botaoSair.disabled = true; rotuloSair('Saindo…');
+    enviar({ acao: 'sair' });
+    // fora do modo quiosque (navegador comum) a janela não fecha sozinha: avisa que o painel foi desligado
+    setTimeout(() => {
+      try { window.close(); } catch { /* só fecha janelas abertas por script */ }
+      dlg.close();
+      document.body.insertAdjacentHTML('beforeend', '<div class="painel-desligado"><b>Painel desligado</b><span>Pode fechar esta janela. Para abrir de novo: iniciar.bat</span></div>');
+    }, 2500);
+  });
   dlg.addEventListener('close', () => retorno.fechar()); // para de ouvir e o servidor apaga as frases
   dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); }); // clique fora fecha
 
