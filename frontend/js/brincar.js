@@ -1,7 +1,7 @@
 // Brincadeiras com as mãos: liga os gestos (maos.js) aos efeitos (luzes.js) e às mudanças na tela.
 import { Maos } from './maos.js';
 import { Luzes } from './luzes.js';
-import { guardar } from './util.js';
+import { guardar, bus } from './util.js';
 
 export const CENAS = [
   { id: 'real', nome: 'Clima de agora', emoji: '🌤️' },
@@ -15,6 +15,7 @@ export const CENAS = [
 export const GESTOS = [
   ['👋', 'Acene', 'o painel dá oi e mostra este guia'],
   ['🫲', 'Deslize a mão', 'para o lado: troca o card em destaque'],
+  ['🖐️', 'Mão aberta para cima ou para baixo', 'rola a lista da Sala'],
   ['✊', 'Feche a mão', 'junta energia… abra para explodir'],
   ['☝️', 'Aponte ou faça pinça', 'desenha com luz no ar'],
   ['👍', 'Joinha', 'fogos de artifício'],
@@ -33,10 +34,10 @@ export class Brincar {
    * @param onda(x,y)  onda no shader (coordenadas 0..1, y para cima)
    * @param cena(id)   troca a cena do fundo ('real' volta ao clima)
    */
-  constructor({ camera, particulas, destaque, onda, cena }) {
+  constructor({ camera, particulas, destaque, onda, cena, distanciaMax = 2, campoVisao = 65 }) {
     Object.assign(this, { camera, particulas, destaque, onda, definirCena: cena });
     this.ativo = guardar.ler('gestos', true);
-    this.maos = new Maos();
+    this.maos = new Maos({ distanciaMax, campoVisao });
     this.luzes = new Luzes(document.getElementById('luzes'));
     this.cenaAtual = 0;
     this.maos.aoEvento = (n, d) => this._evento(n, d);
@@ -124,6 +125,13 @@ export class Brincar {
         this.particulas.explosao(px, py, 1 + d.carga * 3);
         this.onda(d.x, 1 - d.y);
         if (d.carga > .85) this.avisar('💥', 'Kabum!', 1400);
+        break;
+      case 'rolar':
+        bus.emit('rolar-sala', d.dir);
+        this.avisar(d.dir < 0 ? '⬆️' : '⬇️', d.dir < 0 ? 'Lista da Sala: mais antigos' : 'Lista da Sala: mais recentes', 1300);
+        break;
+      case 'longe':
+        this.avisar('🚶', `Chegue mais perto: os gestos valem a até ${this.maos.distanciaMax.toLocaleString('pt-BR')} m`, 3200);
         break;
       case 'deslizar':
         this.luzes.deslize(d.y, d.dir);

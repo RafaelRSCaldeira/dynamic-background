@@ -4,6 +4,7 @@ import { getJSON } from './api.js';
 import { esc, bus } from './util.js';
 import { mini } from './icones.js';
 import { GESTOS } from './brincar.js';
+import { criarRetorno } from './retorno.js';
 
 export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosidadeMin = 5 }) {
   const dlg = document.createElement('dialog');
@@ -16,6 +17,11 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
       <button class="aj-fechar ctl" title="Fechar (Esc)">${mini.fechar}</button>
     </header>
     <div class="aj-rolagem">
+      <section class="aj-secao">
+        <div class="aj-titulo"><h3>Microfone e retorno</h3></div>
+        <p class="aj-ajuda">Se a transcrição está errando, comece por aqui: ouça o que chega ao Whisper. Áudio baixo, abafado, com eco ou ruído atrapalha qualquer modelo.</p>
+        <div data-retorno></div>
+      </section>
       <section class="aj-secao">
         <div class="aj-titulo"><h3>Transcrição da fala</h3><span class="aj-sub" data-whisper-sub></span></div>
         <p class="aj-ajuda">Modelos maiores entendem bem melhor conversas naturais, sotaques e nomes. Com GPU NVIDIA, use o <b>large-v3-turbo</b>.</p>
@@ -36,11 +42,13 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
         <div class="aj-titulo"><h3>Brincar com as mãos</h3><button class="aj-mini" data-gestos></button></div>
         <p class="aj-ajuda" data-gestos-status></p>
         <ul class="aj-gestos">${GESTOS.map(([e, t, d]) => `<li><span>${e}</span><div><b>${t}</b><small>${d}</small></div></li>`).join('')}</ul>
-        <p class="aj-ajuda">Fique a 1–2 m da câmera, com a mão bem visível. Pelo teclado: <kbd>←</kbd> <kbd>→</kbd> trocam o destaque, <kbd>Esc</kbd> sai, <kbd>G</kbd> mostra o guia.</p>
+        <p class="aj-ajuda">Os gestos só valem a menos de <b>${(brincar?.maos.distanciaMax ?? 2).toLocaleString('pt-BR')} m</b> da câmera (quem passa ao fundo é ignorado), com a mão bem visível. Pelo teclado: <kbd>←</kbd> <kbd>→</kbd> trocam o destaque, <kbd>Esc</kbd> sai, <kbd>G</kbd> mostra o guia.</p>
       </section>
     </div>`;
   document.body.append(dlg);
   const $ = s => dlg.querySelector(s);
+  const retorno = criarRetorno($('[data-retorno]'), { enviar });
+  if (new URLSearchParams(location.search).has('debug')) window.__retorno = retorno;
 
   let sala = {}, catalogo = null, buscando = false, pedidoWhisper = null;
 
@@ -132,14 +140,16 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
     g.classList.toggle('ativo', brincar.ativo);
     const st = {
       carregando: '<i class="aj-giro"></i> Carregando o reconhecedor de mãos (só na primeira vez demora mais)…',
-      pronto: brincar.presente ? '🖐️ Mão detectada agora — experimente um gesto!' : 'Pronto. Mostre a mão para a câmera.',
+      pronto: brincar.presente ? '🖐️ Mão detectada agora — experimente um gesto!'
+        : brincar.maos.distancia != null ? `🚶 Mão vista a ~${brincar.maos.distancia.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} m: chegue a menos de ${brincar.maos.distanciaMax.toLocaleString('pt-BR')} m para brincar.`
+        : `Pronto. Mostre a mão para a câmera, a menos de ${brincar.maos.distanciaMax.toLocaleString('pt-BR')} m.`,
       erro: `Reconhecimento de mãos indisponível: ${esc(brincar.maos.erro || '')}`,
     }[brincar.estado];
     $('[data-gestos-status]').innerHTML = !brincar.ativo ? 'Os gestos estão desligados.'
       : !camera.ativa ? 'Ligue a câmera para brincar com as mãos.' : (st || '');
   };
 
-  const render = () => { if (!dlg.open) return; renderWhisper(); renderOllama(); renderCamera(); };
+  const render = () => { if (!dlg.open) return; retorno.render(sala, catalogo?.microfones); renderWhisper(); renderOllama(); renderCamera(); };
 
   // ── eventos ──────────────────────────────────────────────
   $('[data-whisper]').addEventListener('click', e => {
@@ -159,6 +169,7 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
   $('[data-gestos]').addEventListener('click', async () => { if (brincar) { const p = brincar.alternar(); renderCamera(); await p; renderCamera(); } });
   if (brincar) brincar.aoEstado = () => { if (dlg.open) renderCamera(); };
   $('.aj-fechar').addEventListener('click', () => dlg.close());
+  dlg.addEventListener('close', () => retorno.fechar()); // para de ouvir e o servidor apaga as frases
   dlg.addEventListener('click', e => { if (e.target === dlg) dlg.close(); }); // clique fora fecha
 
   // medidor de movimento ao vivo (mostra que a câmera está funcionando)
@@ -166,8 +177,9 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
   const medir = () => {
     if (!dlg.open) return;
     barra.style.transform = `scaleX(${camera.ativa ? Math.min(1, camera.movimento * 3).toFixed(3) : 0})`;
-    const presente = !!brincar?.presente;
-    if (presente !== medir.presente) { medir.presente = presente; renderCamera(); }
+    // atualiza o status quando a mão aparece/some ou a distância muda (de 10 em 10 cm)
+    const chave = `${!!brincar?.presente}|${brincar?.maos.distancia == null ? '' : Math.round(brincar.maos.distancia * 10)}`;
+    if (chave !== medir.chave) { medir.chave = chave; renderCamera(); }
     requestAnimationFrame(medir);
   };
 
@@ -176,6 +188,7 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
     dlg.showModal();
     dlg.focus(); // sem anel de foco no botão fechar ao abrir
     render(); buscar(); requestAnimationFrame(medir);
+    if (catalogo?.audio !== false) retorno.abrir();
   };
   bus.on('abrir-ajustes', abrir);
 

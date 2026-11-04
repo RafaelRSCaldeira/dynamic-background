@@ -4,7 +4,8 @@
 // Saída:
 //   maos.maos  → [{ id, pontos:[{x,y}]×21, palma, indicador, gesto, pinca, carga, desenhando }]
 //                coordenadas normalizadas da TELA (0..1, já espelhadas como num espelho)
-//   aoEvento(nome, dados) → 'joinha' | 'cena' | 'coracoes' | 'desfazer' | 'explosao' | 'deslizar' | 'oi' | 'apareceu'
+//   aoEvento(nome, dados) → 'joinha' | 'cena' | 'coracoes' | 'desfazer' | 'explosao' | 'deslizar' | 'rolar' | 'oi'
+//                          | 'apareceu' | 'longe' (alguém além da distância máxima tentou brincar)
 
 export const CONEXOES = [
   [0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12],
@@ -21,11 +22,18 @@ const ESTAVEL = 3;          // quadros seguidos com o mesmo gesto para consider�
 // Bônus: não é preciso esticar o braço até a borda para alcançar os cantos da tela.
 const MARGEM = 0.16;
 
+// Distância até a câmera: o MediaPipe dá o tamanho REAL da mão (em metros); comparando com o
+// tamanho dela na imagem (em ângulo), sai a distância — vale para mãos grandes, pequenas ou inclinadas.
+const OSSOS = [[0, 5], [0, 9], [0, 17], [5, 17], [5, 9], [9, 13], [13, 17]];
+
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const limitar = v => Math.min(1, Math.max(0, v));
 
 export class Maos {
-  constructor() {
+  constructor({ distanciaMax = 2, campoVisao = 65 } = {}) {
+    this.distanciaMax = distanciaMax;          // metros
+    this.campoVisao = campoVisao * Math.PI / 180; // horizontal, em radianos
+    this.distancia = null;                     // da mão mais próxima (para mostrar em Ajustes)
     this.estado = 'desligado'; // desligado | carregando | pronto | erro
     this.erro = '';
     this.maos = [];
@@ -42,21 +50,12 @@ export class Maos {
 
   async ligar(video) {
     this.video = video;
-    if (!this.reconhecedor) {
-      if (this._carregando) return this._carregando;
-      this._mudarEstado('carregando');
-      this._carregando = (async () => {
-        const { FilesetResolver, GestureRecognizer } = await import('/visao/vision_bundle.mjs');
-        const arquivos = await FilesetResolver.forVisionTasks('/visao/wasm');
-        const criar = delegate => GestureRecognizer.createFromOptions(arquivos, {
-          baseOptions: { modelAssetPath: '/visao/gesture_recognizer.task', delegate },
-          runningMode: 'VIDEO', numHands: 2,
-          minHandDetectionConfidence: 0.4, minHandPresenceConfidence: 0.4, minTrackingConfidence: 0.4,
-        });
-        try { this.reconhecedor = await criar('GPU'); }
-        catch (e) { console.info('Mãos: GPU indisponível, usando CPU', e?.message); this.reconhecedor = await criar('CPU'); }
-      })();
-      try { await this._carregando; }
+    if (!this._worker) {
+      if (!this._carregando) {
+        this._mudarEstado('carregando');
+        this._carregando = this._iniciarWorker();
+      }
+      try { this._worker = await this._carregando; }
       catch (e) {
         console.warn('Reconhecimento de mãos indisponível:', e);
         this._carregando = null;
@@ -67,13 +66,29 @@ export class Maos {
     }
     if (!this.video) return false; // desligaram enquanto carregava
     this._mudarEstado('pronto');
-    if (!this._timer) this._timer = setInterval(() => this._analisar(), 1000 / 30);
+    if (!this._timer) this._timer = setInterval(() => this._enviarQuadro(), 1000 / 60);
     return true;
+  }
+
+  // O MediaPipe roda num worker: a análise (10–30 ms por quadro) não disputa a thread da animação.
+  _iniciarWorker() {
+    return new Promise((ok, falha) => {
+      const w = new Worker('/js/maos-worker.js');
+      w.onmessage = ({ data }) => {
+        if (data.tipo === 'resultado') this._resultado(data);
+        else if (data.tipo === 'pronto') { this.delegate = data.delegate; console.info('Mãos: MediaPipe pronto (' + data.delegate + ')'); ok(w); }
+        else if (data.tipo === 'erro') { w.terminate(); falha(new Error(data.erro)); }
+      };
+      w.onerror = e => { e.preventDefault?.(); w.terminate(); falha(new Error(e.message || 'falha ao carregar o worker')); };
+      // CPU (WASM/XNNPACK) por padrão: no worker não trava a página e não disputa a GPU com a aurora.
+      // Para testar a GPU: /?maos=gpu
+      w.postMessage({ tipo: 'iniciar', delegate: new URLSearchParams(location.search).get('maos')?.toUpperCase() || 'CPU' });
+    });
   }
 
   desligar() {
     clearInterval(this._timer); this._timer = null;
-    this.video = null; this.maos = []; this._rastreio = [];
+    this.video = null; this.maos = []; this._rastreio = []; this.distancia = null;
     if (this.estado !== 'erro') this._mudarEstado('desligado');
   }
 
@@ -84,35 +99,49 @@ export class Maos {
     this.aoEvento?.(nome, dados);
   }
 
-  _analisar() {
+  _enviarQuadro() {
     const v = this.video;
-    if (!v || !this.reconhecedor || v.readyState < 2 || v.currentTime === this._ultimoTempo) return;
-    this._ultimoTempo = v.currentTime;
+    if (!v || !this._worker || this._ocupado || document.hidden || v.readyState < 2 || v.currentTime === this._ultimoTempo) return;
+    // sem mão à vista, 12 quadros/s bastam para notar quem levanta a mão; com mão, 30/s
     const t = performance.now();
+    const intervalo = this._rastreio.length ? 1000 / 30 : 1000 / 12;
+    if (t - (this._ultimoEnvio || 0) < intervalo - 4) return;
+    this._ultimoEnvio = t;
+    this._ultimoTempo = v.currentTime;
+    this._ocupado = true;
 
-    // recorta o centro do vídeo num canvas (zoom digital)
+    // recorta só o centro do vídeo (zoom digital); o recorte é feito fora da thread principal
     const vw = v.videoWidth, vh = v.videoHeight;
     const cw = Math.round(vw * (1 - 2 * MARGEM)), ch = Math.round(vh * (1 - 2 * MARGEM));
-    if (!this._recorte) {
-      this._recorte = document.createElement('canvas');
-      this._ctxRecorte = this._recorte.getContext('2d', { willReadFrequently: false });
-    }
-    if (this._recorte.width !== cw || this._recorte.height !== ch) { this._recorte.width = cw; this._recorte.height = ch; }
-    this._ctxRecorte.drawImage(v, Math.round(vw * MARGEM), Math.round(vh * MARGEM), cw, ch, 0, 0, cw, ch);
+    createImageBitmap(v, Math.round(vw * MARGEM), Math.round(vh * MARGEM), cw, ch).then(imagem => {
+      if (!this.video) { imagem.close(); this._ocupado = false; return; }
+      this._tQuadro = t;
+      this._dims = { cw, ch, vw };
+      this._worker.postMessage({ tipo: 'quadro', imagem, t }, [imagem]);
+    }).catch(() => { this._ocupado = false; });
+  }
 
-    let r;
-    try { r = this.reconhecedor.recognizeForVideo(this._recorte, t); } catch (e) { return; }
+  _resultado({ maos, ms }) {
+    this._ocupado = false;
+    this.msAnalise = this.msAnalise ? this.msAnalise * .9 + ms * .1 : ms;
+    if (!this.video) return;
+    const t = this._tQuadro, { cw, ch, vw } = this._dims;
 
     // converte para coordenadas de tela, espelhadas (como num espelho)
-    const detectadas = (r.landmarks || []).map((lm, i) => {
-      const pontos = lm.map(p => ({ x: limitar(1 - p.x), y: limitar(p.y) }));
-      const cat = r.gestures?.[i]?.[0];
+    const detectadas = maos.map(mao => {
+      const pontos = mao.pontos.map(([x, y]) => ({ x: limitar(1 - x), y: limitar(y) }));
       const palma = [0, 5, 9, 13, 17].reduce((s, k) => ({ x: s.x + pontos[k].x / 5, y: s.y + pontos[k].y / 5 }), { x: 0, y: 0 });
       const tamanho = Math.max(0.02, dist(pontos[0], pontos[9]));
+      let real = 0, angulo = 0;
+      if (mao.mundo.length === 21) for (const [a, b] of OSSOS) {
+        real += Math.hypot(mao.mundo[a][0] - mao.mundo[b][0], mao.mundo[a][1] - mao.mundo[b][1]);
+        angulo += Math.hypot((mao.pontos[a][0] - mao.pontos[b][0]) * cw, (mao.pontos[a][1] - mao.pontos[b][1]) * ch) / vw * this.campoVisao;
+      }
       return {
         pontos, palma, tamanho,
+        metros: real && angulo ? real / angulo : null,
         indicador: pontos[8],
-        bruto: cat && cat.score > 0.55 ? cat.categoryName : 'None',
+        bruto: mao.score > 0.55 ? mao.gesto : 'None',
         pinca: dist(pontos[4], pontos[8]) / tamanho < 0.33,
       };
     });
@@ -130,14 +159,23 @@ export class Maos {
       if (melhor) usadas.add(melhor);
       const m = melhor || { id: this._proximoId++, hist: [], gesto: 'None', candidato: 'None', conta: 0, desde: t, disparado: false, punhoDesde: 0, soltouPunho: 0, carga: 0 };
       Object.assign(m, d, { visto: t });
-      this._atualizarGesto(m, t);
+      // só brinca quem está perto (com folga de 12% para não piscar bem na fronteira)
+      if (m.metros == null) m.perto = true;
+      else if (m.metros <= this.distanciaMax) m.perto = true;
+      else if (m.metros > this.distanciaMax * 1.12 || m.perto === undefined) m.perto = false;
+      if (m.perto) this._atualizarGesto(m, t);
+      else Object.assign(m, { hist: [], gesto: 'None', candidato: 'None', conta: 0, carga: 0, punhoDesde: 0, soltouPunho: 0, desenhando: false });
       vistas.push(m);
     }
     const perdidas = anteriores.filter(a => !usadas.has(a) && t - a.visto < 400);
     this._rastreio = [...vistas, ...perdidas];
-    this.maos = vistas;
+    this.maos = vistas.filter(m => m.perto);
+    const ds = vistas.map(m => m.metros).filter(v => v != null);
+    this.distancia = ds.length ? Math.min(...ds) : null;
+    const longe = vistas.find(m => !m.perto);
+    if (longe && !this.maos.length && longe.bruto !== 'None') this._emitir('longe', { metros: longe.metros }, 20000);
 
-    if (novas.length && !this._jaApareceu) { this._jaApareceu = true; this.aoEvento?.('apareceu', {}); }
+    if (vistas.length && !this._jaApareceu) { this._jaApareceu = true; this.aoEvento?.('apareceu', {}); }
   }
 
   _atualizarGesto(m, t) {
@@ -184,6 +222,12 @@ export class Maos {
       const dx = m.palma.x - janela[0].x, dy = m.palma.y - janela[0].y;
       if (Math.abs(dx) > 0.25 && Math.abs(dy) < Math.abs(dx) * 0.7) {
         this._emitir('deslizar', { dir: Math.sign(dx), y: m.palma.y }, 850);
+        m.hist = [];
+        return;
+      }
+      // para cima/baixo, com a mão aberta: rola a lista da Sala (mão fechada ou baixando à toa não conta)
+      if (Math.abs(dy) > 0.25 && Math.abs(dx) < Math.abs(dy) * 0.7 && m.gesto === 'Open_Palm') {
+        this._emitir('rolar', { dir: Math.sign(dy), x: m.palma.x, y: m.palma.y }, 700);
         m.hist = [];
         return;
       }

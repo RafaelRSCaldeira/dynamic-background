@@ -117,7 +117,7 @@ addEventListener('pointermove', e => {
   if (!pendente) { pendente = true; requestAnimationFrame(atualizarCards); }
 });
 addEventListener('pointerdown', e => {
-  if (e.target.closest('button, dialog')) return;
+  if (e.target.closest('button, dialog, .sala-feed')) return;
   cena.clique = { x: e.clientX / innerWidth, y: 1 - e.clientY / innerHeight, idade: 0 };
   particulas.explosao(e.clientX, e.clientY);
 });
@@ -156,6 +156,8 @@ brincar = new Brincar({
   camera, particulas, destaque,
   onda: (x, y) => { cena.clique = { x, y, idade: 0 }; },
   cena: forcarCena,
+  distanciaMax: cfg.camera?.distancia_gestos ?? 2,
+  campoVisao: cfg.camera?.campo_visao ?? 65,
 });
 
 const alternarCamera = async () => {
@@ -176,7 +178,7 @@ ajustes = iniciarAjustes({
 // links diretos para testar: /#destaque-semana, /?debug (registra os gestos no console)
 const ancora = location.hash.match(/^#destaque-(\w+)/);
 if (ancora) destaque.irPara(ancora[1]);
-if (new URLSearchParams(location.search).has('debug')) Object.assign(window, { __brincar: brincar, __destaque: destaque });
+if (new URLSearchParams(location.search).has('debug')) Object.assign(window, { __brincar: brincar, __destaque: destaque, __sala: widgetSala });
 const btnAjustes = document.getElementById('btn-ajustes');
 btnAjustes.innerHTML = mini.ajustes;
 btnAjustes.addEventListener('click', ajustes.abrir);

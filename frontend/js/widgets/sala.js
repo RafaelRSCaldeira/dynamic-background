@@ -23,9 +23,11 @@ export function iniciar(el, { enviar }) {
     </header>
     <div class="sala-onda"><canvas></canvas><div class="sala-privado">${mini.micOff}<span>Privacidade ativa — nada está sendo ouvido</span></div></div>
     <div class="sala-corpo">
+      <div class="sala-feed" tabindex="0" aria-label="Destaques da conversa. Arraste para cima ou para baixo para ler.">
+        <ol class="sala-lista" aria-live="polite"></ol>
+      </div>
+      <button class="sala-novos" hidden></button>
       <p class="sala-resumo vazio">Quando houver conversa na sala, os destaques aparecem aqui.</p>
-      <div class="sala-topicos"></div>
-      <div class="sala-cards"></div>
       <ul class="sala-dicas">
         <li>${mini.sala}<span><b>Tudo local.</b> A voz é transcrita pelo Whisper e analisada pela IA neste computador.</span></li>
         <li>${mini.borracha}<span><b>Nada é gravado.</b> O texto fica só na memória e é apagado sozinho depois de alguns minutos.</span></li>
@@ -42,7 +44,59 @@ export function iniciar(el, { enviar }) {
   const botao = $('.sala-mute'), canvas = $('.sala-onda canvas'), ctx = canvas.getContext('2d');
   let estado = { estado: 'offline' }, conectado = false, nivel = 0, alvoNivel = 0;
   const historico = new Float32Array(72);
-  const cardsVistos = new Set();
+  const feed = $('.sala-feed'), lista = $('.sala-lista'), novos = $('.sala-novos');
+  const mostrados = new Set();
+  let naoLidos = 0, mexeuEm = 0;
+  arrastavel(feed, () => { mexeuEm = performance.now(); });
+  feed.addEventListener('scroll', () => {
+    if (feed.scrollTop < 8 && naoLidos) { naoLidos = 0; novos.hidden = true; }
+  }, { passive: true });
+  const irParaTopo = () => { feed.scrollTo({ top: 0, behavior: 'smooth' }); naoLidos = 0; novos.hidden = true; };
+  novos.addEventListener('click', irParaTopo);
+  // quem rolou para ler e largou: depois de um minuto parado, volta sozinho para o mais recente
+  setInterval(() => { if (feed.scrollTop > 8 && performance.now() - mexeuEm > 60e3) irParaTopo(); }, 5e3);
+  bus.on('rolar-sala', dir => {   // gesto: mão para cima/baixo rola a lista
+    mexeuEm = performance.now();
+    feed.scrollBy({ top: -dir * feed.clientHeight * .7, behavior: 'smooth' });
+  });
+
+  const hora = t => new Date(t * 1000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const itemHTML = h => h.tipo === 'resumo'
+    ? `<li class="item item-resumo" data-id="${h.id}">
+        <time>${hora(h.t)}</time>
+        <p>${esc(h.texto)}</p>
+        ${h.topicos?.length ? `<div class="sala-topicos">${h.topicos.map((t, i) => `<span class="topico" style="--j:${i}">${esc(t)}</span>`).join('')}</div>` : ''}
+      </li>`
+    : `<li class="item insight tipo-${esc(h.tipo)}" data-id="${h.id}">
+        <div class="insight-ic">${mini[h.tipo] || mini.contexto}</div>
+        <div><small>${TIPOS[h.tipo] || ''}<time>${hora(h.t)}</time></small><h4>${esc(h.titulo)}</h4><p>${esc(h.texto)}</p></div>
+      </li>`;
+
+  // a lista só cresce: itens novos entram no topo e os antigos ficam (sem re-renderizar nem pular a leitura)
+  const renderLista = itens => {
+    const validos = new Set(itens.map(h => h.id));
+    for (const li of [...lista.children]) if (!validos.has(+li.dataset.id)) { mostrados.delete(+li.dataset.id); li.remove(); }
+    if (!itens.length) { naoLidos = 0; novos.hidden = true; return; }
+    const ordem = (a, b) => b.t - a.t || (a.tipo === 'resumo' ? -1 : b.tipo === 'resumo' ? 1 : a.id - b.id);
+    const chegaram = itens.filter(h => !mostrados.has(h.id)).sort(ordem);
+    if (!chegaram.length) return;
+    const primeiraVez = !mostrados.size;
+    const lendo = feed.scrollTop > 8, alturaAntes = feed.scrollHeight;
+    lista.insertAdjacentHTML('afterbegin', chegaram.map(itemHTML).join(''));
+    chegaram.forEach((h, i) => {
+      mostrados.add(h.id);
+      const li = lista.querySelector(`[data-id="${h.id}"]`);
+      if (!primeiraVez) { li.classList.add('novo'); li.style.setProperty('--j', i); }
+    });
+    lista.querySelectorAll('.item-resumo.atual').forEach(li => li.classList.remove('atual'));
+    lista.querySelector('.item-resumo')?.classList.add('atual');
+    if (lendo) {   // mantém no lugar o que a pessoa está lendo e avisa que chegou coisa nova
+      feed.scrollTop += feed.scrollHeight - alturaAntes;
+      naoLidos += chegaram.length;
+      novos.hidden = false;
+      novos.textContent = `↑ ${naoLidos} ${naoLidos === 1 ? 'novo' : 'novos'}`;
+    }
+  };
 
   botao.addEventListener('click', () => enviar({ acao: 'mute' }));
   $('.sala-ia').addEventListener('click', () => bus.emit('abrir-ajustes'));
@@ -65,25 +119,13 @@ export function iniciar(el, { enviar }) {
     el.classList.toggle('privado', !!estado.mutado || !conectado || nome === 'desativado');
 
     if (!('insights' in estado)) return; // cliente remoto: só estado
-    const ins = estado.insights;
-    const resumo = $('.sala-resumo');
-    if (ins?.resumo) { resumo.textContent = ins.resumo; resumo.classList.remove('vazio'); }
-    else {
-      resumo.classList.add('vazio');
-      resumo.textContent = estado.ia === 'indisponivel' && estado.ia_detalhe ? `IA local indisponível: ${estado.ia_detalhe}` : 'Quando houver conversa na sala, os destaques aparecem aqui.';
-    }
-    $('.sala-topicos').innerHTML = (ins?.topicos || []).map((t, i) => `<span class="topico" style="--j:${i}">${esc(t)}</span>`).join('');
-    $('.sala-cards').innerHTML = (ins?.cards || []).map((c, i) => {
-      const chave = c.tipo + c.titulo;
-      const novo = !cardsVistos.has(chave); cardsVistos.add(chave);
-      return `<article class="insight tipo-${c.tipo} ${novo ? 'novo' : ''}" style="--j:${i}">
-        <div class="insight-ic">${mini[c.tipo] || mini.contexto}</div>
-        <div><small>${TIPOS[c.tipo] || ''}</small><h4>${esc(c.titulo)}</h4><p>${esc(c.texto)}</p></div>
-      </article>`;
-    }).join('');
+    const itens = estado.historico || [];
+    renderLista(itens);
+    $('.sala-resumo').textContent = estado.ia === 'indisponivel' && estado.ia_detalhe
+      ? `IA local indisponível: ${estado.ia_detalhe}` : 'Quando houver conversa na sala, os destaques aparecem aqui.';
 
     const linhas = (estado.linhas || []).slice(-2);
-    el.classList.toggle('com-conteudo', !!(ins?.resumo || ins?.cards?.length));
+    el.classList.toggle('com-conteudo', itens.length > 0);
     $('.sala-ao-vivo').innerHTML = linhas.map(l => `<p>“${esc(l.texto)}”</p>`).join('');
     atualizarIA();
   };
@@ -115,8 +157,11 @@ export function iniciar(el, { enviar }) {
     const W = canvas.width, H = canvas.height; if (!W || !H) return;
     ctx.clearRect(0, 0, W, H);
     const n = historico.length, gap = W / n, bw = Math.max(1.5, gap * .45);
-    const cor = getComputedStyle(el).getPropertyValue('--cor-onda').trim() || '#7dd3fc';
-    ctx.fillStyle = cor;
+    if (agora - (desenhar.corEm || 0) > 1000) {   // ler o CSS a cada quadro força recalcular o estilo da página
+      desenhar.corEm = agora;
+      desenhar.cor = getComputedStyle(el).getPropertyValue('--cor-onda').trim() || '#7dd3fc';
+    }
+    ctx.fillStyle = desenhar.cor;
     for (let i = 0; i < n; i++) {
       const v = historico[i], h = Math.max(bw, v * H * .9);
       ctx.globalAlpha = .25 + .75 * (i / n);
@@ -131,4 +176,42 @@ export function iniciar(el, { enviar }) {
     conexao(ok) { conectado = ok; if (!ok) alvoNivel = 0; render(); },
     nivel(v) { alvoNivel = v; bus.emit('voz', v); },
   };
+}
+
+/** Rolar arrastando com o mouse (no toque, o navegador já faz), com inércia ao soltar. */
+function arrastavel(el, aoMexer) {
+  let ini = null, vel = 0, ultY = 0, ultT = 0, raf = 0, arrastou = false;
+  el.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'touch' || e.button !== 0) return;
+    cancelAnimationFrame(raf);
+    ini = { y: e.clientY, top: el.scrollTop }; ultY = e.clientY; ultT = e.timeStamp; vel = 0; arrastou = false;
+    aoMexer();
+  });
+  el.addEventListener('pointermove', e => {
+    if (!ini) return;
+    const dy = e.clientY - ini.y;
+    if (!arrastou && Math.abs(dy) > 5) { arrastou = true; el.setPointerCapture(e.pointerId); el.classList.add('arrastando'); }
+    if (!arrastou) return;
+    el.scrollTop = ini.top - dy;
+    const dt = e.timeStamp - ultT;
+    if (dt > 0) vel = .75 * ((ultY - e.clientY) / dt) + .25 * vel;   // px/ms
+    ultY = e.clientY; ultT = e.timeStamp;
+    aoMexer();
+  });
+  const soltar = e => {
+    if (!ini) return;
+    ini = null; el.classList.remove('arrastando');
+    if (!arrastou || e.timeStamp - ultT > 80) return;   // parou antes de soltar: sem inércia
+    let v = vel * 16, ant = performance.now();
+    const passo = t => {
+      const k = Math.min(3, (t - ant) / 16); ant = t;
+      el.scrollTop += v * k; v *= Math.pow(.95, k);
+      if (Math.abs(v) > .4) raf = requestAnimationFrame(passo);
+    };
+    raf = requestAnimationFrame(passo);
+  };
+  el.addEventListener('pointerup', soltar);
+  el.addEventListener('pointercancel', soltar);
+  el.addEventListener('wheel', () => { cancelAnimationFrame(raf); aoMexer(); }, { passive: true });
+  el.addEventListener('click', e => { if (arrastou) { e.stopPropagation(); e.preventDefault(); arrastou = false; } }, true);
 }
