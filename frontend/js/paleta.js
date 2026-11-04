@@ -64,3 +64,28 @@ export function noturno(agora, nascer, por) {
   if (!nascer || !por) return true;
   return agora < nascer - 30 * 60000 || agora > por.getTime() + 40 * 60000;
 }
+
+/** Paleta vinda de uma cena do Zak: 4 cores hex (escura → viva), já prontas (tiradas da foto). */
+export function paletaDeCores(hexes, nuvem = 0) {
+  const cores = hexes.slice(0, 4).map(hex);
+  const a = cores[3].map(v => Math.round(lerp(v, 1, .3) * 255));
+  return { cores, nuvem, acento: `rgb(${a.join(',')})` };
+}
+
+/** Paleta a partir de um único tom (cena sem foto): mesmo "desenho" das paletas fixas, no tom pedido. */
+export function paletaDeTom(cor) {
+  const [r, g, b] = hex(cor);
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  let h = 0;
+  if (d) h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  h = (h * 60 + 360) % 360;
+  const s = mx ? d / mx : 0;
+  const hsv = (hh, ss, vv) => {
+    const f = n => { const k = (n + hh / 60) % 6; return vv - vv * ss * Math.max(0, Math.min(k, 4 - k, 1)); };
+    return [f(5), f(3), f(1)];
+  };
+  // fundo um pouco "girado" no círculo de cores: dá profundidade sem perder o tom
+  const cores = [hsv(h - 25, .7, .055), hsv(h - 15, .75, .24), hsv(h - 5, .7, .45), hsv(h, Math.max(.45, s), .85)];
+  const a = cores[3].map(v => Math.round(lerp(v, 1, .3) * 255));
+  return { cores, nuvem: 0, acento: `rgb(${a.join(',')})` };
+}

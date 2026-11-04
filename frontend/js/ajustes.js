@@ -17,6 +17,15 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
       <button class="aj-fechar ctl" title="Fechar (Esc)">${mini.fechar}</button>
     </header>
     <div class="aj-rolagem">
+      <section class="aj-secao" data-zak-secao hidden>
+        <div class="aj-titulo"><h3>Zak</h3><span class="aj-sub" data-zak-sub></span></div>
+        <div class="aj-linha">
+          <div><b>Proteção de informação</b>
+            <small>A tela mostra só o tema da conversa, nunca falas, nomes ou números, e não mostra nada sobre assuntos pessoais ou delicados (RH, saúde, salário…). Recomendado no escritório.</small></div>
+          <button class="aj-mini" data-zak-protecao></button>
+        </div>
+        <p class="aj-ajuda">Chame com <b>“Ei, Zak”</b> e faça o pedido na mesma frase. Também dá para digitar: tecla <kbd>Z</kbd> ou clique no orbe. Para ele não escutar nada, use o mute (<kbd>M</kbd>).</p>
+      </section>
       <section class="aj-secao">
         <div class="aj-titulo"><h3>Microfone e retorno</h3></div>
         <p class="aj-ajuda">Se a transcrição está errando, comece por aqui: ouça o que chega ao Whisper. Áudio baixo, abafado, com eco ou ruído atrapalha qualquer modelo.</p>
@@ -237,9 +246,30 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
   };
   bus.on('abrir-ajustes', abrir);
 
+  // ── Zak ──────────────────────────────────────────────────
+  let zak = null;
+  const renderZak = () => {
+    if (!zak) return;
+    $('[data-zak-secao]').hidden = false;
+    const b = $('[data-zak-protecao]');
+    b.textContent = zak.protecao ? 'Ligada' : 'Desligada';
+    b.classList.toggle('ativo', !!zak.protecao);
+    const voz = { pronta: 'voz pronta', carregando: 'carregando a voz…', erro: 'sem voz', desligada: 'voz desligada' }[zak.voz] || '';
+    const img = zak.imagem ? ` · imagens: ${zak.imagem}` : '';
+    $('[data-zak-sub]').textContent = voz + img;
+    $('[data-zak-sub]').title = [zak.voz_detalhe, zak.imagem_detalhe].filter(Boolean).join(' · ');
+  };
+  $('[data-zak-protecao]').addEventListener('click', () => {
+    if (!zak) return;
+    zak.protecao = !zak.protecao;
+    enviar({ acao: 'zak_protecao', valor: zak.protecao });
+    renderZak();
+  });
+
   return {
     abrir,
     get aberto() { return dlg.open; },
+    zak(msg) { zak = { ...zak, ...msg }; renderZak(); },
     estado(msg) {
       const antes = sala.estado;
       sala = { ...sala, ...msg };

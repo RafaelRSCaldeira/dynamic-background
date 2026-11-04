@@ -18,16 +18,24 @@ import * as sala from './widgets/sala.js';
 import { iniciarAjustes } from './ajustes.js';
 
 const cfg = await getJSON('/api/config').catch(() => ({ tela: {}, camera: { ativada: false } }));
+const params = new URLSearchParams(location.search);
+// Zak: a tela vira a cena do assunto da conversa (protótipo: /?zak, demonstração: /?zak&demo)
+const modoZak = params.has('zak') || !!cfg.zak?.ativado;
 const W = nome => document.querySelector(`[data-w="${nome}"]`);
 
 // ── Conexão em tempo real ───────────────────────────────────
-let widgetSala, ajustes;
+let widgetSala, ajustes, zakCliente = null, ultimoZak = null;
+const paraZak = [];   // mensagens do Zak que chegam antes de o módulo dele carregar
 const conexao = conectar(
   msg => {
     if (msg.tipo === 'sala') { widgetSala.estado(msg); ajustes?.estado(msg); }
     else if (msg.tipo === 'nivel') widgetSala.nivel(msg.v);
+    else if (msg.tipo?.startsWith('zak')) {
+      if (msg.tipo === 'zak' && modoZak) { ultimoZak = msg; ajustes?.zak(msg); }
+      if (zakCliente) zakCliente.receber(msg); else if (modoZak) paraZak.push(msg);
+    }
   },
-  ok => widgetSala.conexao(ok),
+  ok => { widgetSala.conexao(ok); if (ok && modoZak) conexao.enviar({ acao: 'zak_tela' }); },
 );
 
 // ── Widgets ─────────────────────────────────────────────────
@@ -75,9 +83,17 @@ const forcarCena = id => {
   atualizarCena();
 };
 
+let paletaZak = null;   // cena do Zak na tela: a paleta dela manda no fundo
 const atualizarCena = () => {
   const d = bus.ultimo.clima;
   const agoraD = new Date();
+  if (paletaZak) {
+    cena.alvo = paletaZak;
+    cena.tempestade = false;
+    particulas.definir('poeira', { vento: .2, intensidade: .35 });
+    document.documentElement.style.setProperty('--acento', cena.alvo.acento);
+    return;
+  }
   if (cenaForcada && performance.now() > cenaForcadaAte) { cenaForcada = null; brincar?.cenaExpirou(); }
   if (cenaForcada) {
     const c = CENAS_FIXAS[cenaForcada];
@@ -150,10 +166,52 @@ const pintarBotaoCamera = () => {
   btnCamera.classList.toggle('ativo', camera.ativa);
   document.body.classList.toggle('camera-ativa', camera.ativa);
 };
+// ── Zak: palco das cenas e presença ─────────────────────────
+let palco = null, zak = null;
+if (modoZak) {
+  document.body.classList.add('zak');
+  const [{ Palco }, { Presenca }] = await Promise.all([import('./zak/palco.js'), import('./zak/presenca.js')]);
+  palco = new Palco({
+    aoPaleta: p => {
+      paletaZak = p; atualizarCena();
+      // tom mais escuro da cena: usado no véu que garante a leitura do texto sobre a foto
+      if (p) document.documentElement.style.setProperty('--cena-0', `rgb(${p.cores[0].map(v => Math.round(v * 255)).join(',')})`);
+    },
+    aoAlarme: () => tocarAlarme(),
+  });
+  zak = new Presenca();
+  if (params.has('demo')) (await import('./zak/demo.js')).iniciarDemo({ palco, presenca: zak, automatico: params.get('demo') !== 'manual' });
+  else {
+    const { iniciarZak } = await import('./zak/cliente.js');
+    zakCliente = iniciarZak({ palco, presenca: zak, enviar: conexao.enviar, tocarAlarme: () => tocarAlarme() });
+    paraZak.splice(0).forEach(m => zakCliente.receber(m));
+  }
+}
+// alarme curto e suave (acorde que some), sem arquivo de áudio
+function tocarAlarme() {
+  try {
+    const ctx = new AudioContext();
+    [0, .9, 1.8].forEach(t0 => [523.25, 659.25, 783.99].forEach((f, i) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      g.gain.setValueAtTime(0, ctx.currentTime + t0 + i * .06);
+      g.gain.linearRampToValueAtTime(.12, ctx.currentTime + t0 + i * .06 + .03);
+      g.gain.exponentialRampToValueAtTime(.0001, ctx.currentTime + t0 + i * .06 + 1.4);
+      o.connect(g).connect(ctx.destination); o.start(ctx.currentTime + t0 + i * .06); o.stop(ctx.currentTime + t0 + 1.6);
+    }));
+    setTimeout(() => ctx.close(), 4000);
+  } catch { /* sem áudio */ }
+}
+
 // ── Brincadeiras com as mãos (gestos) e modo destaque ───────
 const destaque = new Destaque();
+// no modo Zak, deslizar a mão anda pelo histórico de cenas em vez dos cards
+const navegacao = palco ? {
+  ir: d => palco.navegar(d), sair: () => { palco.repouso(); conexao.enviar({ acao: 'zak_limpar' }); },
+  get nome() { return palco.nome; }, get ativo() { return palco.ativa; },
+} : destaque;
 brincar = new Brincar({
-  camera, particulas, destaque,
+  camera, particulas, destaque: navegacao,
   onda: (x, y) => { cena.clique = { x, y, idade: 0 }; },
   cena: forcarCena,
   distanciaMax: cfg.camera?.distancia_gestos ?? 2,
@@ -175,10 +233,11 @@ ajustes = iniciarAjustes({
   enviar: conexao.enviar, camera, alternarCamera, brincar,
   ociosidadeMin: cfg.camera?.ociosidade_minutos ?? 5,
 });
+if (ultimoZak) ajustes.zak(ultimoZak);
 // links diretos para testar: /#destaque-semana, /?debug (registra os gestos no console)
 const ancora = location.hash.match(/^#destaque-(\w+)/);
 if (ancora) destaque.irPara(ancora[1]);
-if (new URLSearchParams(location.search).has('debug')) Object.assign(window, { __brincar: brincar, __destaque: destaque, __sala: widgetSala });
+if (params.has('debug')) Object.assign(window, { __brincar: brincar, __destaque: destaque, __sala: widgetSala, __palco: palco, __zak: zak });
 const btnAjustes = document.getElementById('btn-ajustes');
 btnAjustes.innerHTML = mini.ajustes;
 btnAjustes.addEventListener('click', ajustes.abrir);
@@ -192,14 +251,15 @@ btnTela.addEventListener('click', telaCheia);
 addEventListener('keydown', e => {
   if (e.ctrlKey || e.altKey || e.metaKey || ajustes.aberto) return;
   const k = e.key.toLowerCase();
+  if (document.activeElement?.matches?.('input, textarea')) return;
   if (k === 'm') conexao.enviar({ acao: 'mute' });
   else if (k === 'c') alternarCamera();
   else if (k === 'f') telaCheia();
   else if (k === 'a') ajustes.abrir();
   else if (k === 'g') brincar.mostrarGuia();
-  else if (e.key === 'ArrowRight') destaque.ir(1);
-  else if (e.key === 'ArrowLeft') destaque.ir(-1);
-  else if (e.key === 'Escape') destaque.sair();
+  else if (e.key === 'ArrowRight') navegacao.ir(1);
+  else if (e.key === 'ArrowLeft') navegacao.ir(-1);
+  else if (e.key === 'Escape') navegacao.sair();
 });
 
 // ── Laço de animação ────────────────────────────────────────
