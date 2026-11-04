@@ -203,16 +203,16 @@ export class Luzes {
     ctx.globalCompositeOperation = 'lighter';
     for (const m of maos) {
       const P = m.pontos.map(p => ({ x: p.x * w, y: p.y * h }));
-      const quente = m.carga || 0;
+      const quente = m.carga || 0, k = m.ativa === false ? .3 : 1;   // mão que não comanda: mais apagada
       const cr = Math.round(ar + (255 - ar) * quente), cg = Math.round(ag + (150 - ag) * quente), cb = Math.round(ab + (60 - ab) * quente);
-      ctx.strokeStyle = `rgba(${cr},${cg},${cb},.32)`; ctx.lineWidth = 1.6 * u;
+      ctx.strokeStyle = `rgba(${cr},${cg},${cb},${.32 * k})`; ctx.lineWidth = 1.6 * u;
       ctx.beginPath();
       for (const [a, b] of CONEXOES) { ctx.moveTo(P[a].x, P[a].y); ctx.lineTo(P[b].x, P[b].y); }
       ctx.stroke();
       for (let i = 0; i < P.length; i++) {
         const ponta = PONTAS.includes(i), destaque = m.desenhando && i === 8;
         const r = (destaque ? 46 : ponta ? 22 : 11) * u;
-        ctx.globalAlpha = destaque ? 1 : ponta ? .9 : .6;
+        ctx.globalAlpha = (destaque ? 1 : ponta ? .9 : .6) * k;
         ctx.drawImage(this.sprite, P[i].x - r, P[i].y - r, r * 2, r * 2);
       }
       ctx.globalAlpha = 1;

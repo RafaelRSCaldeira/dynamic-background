@@ -2,8 +2,9 @@
 // O código e o modelo vêm do próprio servidor (/visao), que os baixa uma vez e guarda em cache.
 //
 // Saída:
-//   maos.maos  → [{ id, pontos:[{x,y}]×21, palma, indicador, gesto, pinca, carga, desenhando }]
+//   maos.maos  → [{ id, pontos:[{x,y}]×21, palma, indicador, gesto, pinca, carga, desenhando, ativa }]
 //                coordenadas normalizadas da TELA (0..1, já espelhadas como num espelho)
+//   maos.ativa → a única mão que comanda (as outras só aparecem na tela)
 //   aoEvento(nome, dados) → 'joinha' | 'cena' | 'coracoes' | 'desfazer' | 'explosao' | 'deslizar' | 'rolar' | 'oi'
 //                          | 'apareceu' | 'longe' (alguém além da distância máxima tentou brincar)
 
@@ -16,7 +17,7 @@ export const PONTAS = [4, 8, 12, 16, 20];
 // Gestos que disparam uma ação quando mantidos por um instante
 const ACOES = { Thumb_Up: 'joinha', Victory: 'cena', ILoveYou: 'coracoes', Thumb_Down: 'desfazer' };
 const SEGURAR_MS = 450;     // tempo segurando o gesto até disparar
-const ESTAVEL = 3;          // quadros seguidos com o mesmo gesto para considerá-lo
+const ESTAVEL_MS = 120;     // o mesmo gesto por este tempo (e ao menos 2 quadros) para considerá-lo
 // Só o centro da câmera é analisado, ampliado ("zoom digital"): o modelo reduz a imagem inteira
 // para ~200 px, e uma mão a 2 m da câmera fica pequena demais. Ampliar o centro faz muita diferença.
 // Bônus: não é preciso esticar o braço até a borda para alcançar os cantos da tela.
@@ -157,84 +158,174 @@ export class Maos {
         if (dd < md) { md = dd; melhor = a; }
       }
       if (melhor) usadas.add(melhor);
-      const m = melhor || { id: this._proximoId++, hist: [], gesto: 'None', candidato: 'None', conta: 0, desde: t, disparado: false, punhoDesde: 0, soltouPunho: 0, carga: 0 };
+      const m = melhor || this._novaMao(t);
       Object.assign(m, d, { visto: t });
       // só brinca quem está perto (com folga de 12% para não piscar bem na fronteira)
       if (m.metros == null) m.perto = true;
       else if (m.metros <= this.distanciaMax) m.perto = true;
       else if (m.metros > this.distanciaMax * 1.12 || m.perto === undefined) m.perto = false;
-      if (m.perto) this._atualizarGesto(m, t);
-      else Object.assign(m, { hist: [], gesto: 'None', candidato: 'None', conta: 0, carga: 0, punhoDesde: 0, soltouPunho: 0, desenhando: false });
+      m.hist.push({ x: m.palma.x, y: m.palma.y, t });
+      while (m.hist.length && t - m.hist[0].t > 1600) m.hist.shift();
+      this._atualizarRepouso(m, t);
       vistas.push(m);
     }
     const perdidas = anteriores.filter(a => !usadas.has(a) && t - a.visto < 400);
     this._rastreio = [...vistas, ...perdidas];
-    this.maos = vistas.filter(m => m.perto);
+
+    // Só UMA mão comanda por vez (a "dona"). A outra mão parada, ou a de quem está do lado,
+    // aparece na tela mas não dispara nada.
+    const perto = vistas.filter(m => m.perto);
+    const dona = this._escolherDona(perto, t);
+    for (const m of vistas) {
+      m.ativa = m === dona;
+      if (m.ativa) this._atualizarGesto(m, t);
+      else this._neutralizar(m);
+    }
+    this.maos = perto;
+    this.ativa = dona;
+
     const ds = vistas.map(m => m.metros).filter(v => v != null);
     this.distancia = ds.length ? Math.min(...ds) : null;
     const longe = vistas.find(m => !m.perto);
-    if (longe && !this.maos.length && longe.bruto !== 'None') this._emitir('longe', { metros: longe.metros }, 20000);
+    if (longe && !perto.length && longe.bruto !== 'None') this._emitir('longe', { metros: longe.metros }, 20000);
 
-    if (vistas.length && !this._jaApareceu) { this._jaApareceu = true; this.aoEvento?.('apareceu', {}); }
+    if (perto.length && !this._jaApareceu) { this._jaApareceu = true; this.aoEvento?.('apareceu', {}); }
+  }
+
+  _novaMao(t) {
+    return {
+      id: this._proximoId++, hist: [], nasceu: t, gesto: 'None', candidato: 'None', conta: 0, candidatoDesde: t, desde: t,
+      disparado: false, punhoDesde: 0, soltouPunho: 0, carga: 0, pincaConta: 0,
+      armado: false, quietoDesde: 0, repouso: false, pendente: null, retorno: null,
+    };
+  }
+
+  /** Mão que não comanda: esquece qualquer gesto em andamento (ao virar dona, começa do zero). */
+  _neutralizar(m) {
+    Object.assign(m, { gesto: 'None', candidato: 'None', conta: 0, carga: 0, punhoDesde: 0, soltouPunho: 0,
+      pincaConta: 0, desenhando: false, disparado: false, armado: false, quietoDesde: 0, pendente: null });
+  }
+
+  /** Mão parada, aberta ou relaxada há um tempo = em repouso (a outra mão, ou alguém só assistindo). */
+  _atualizarRepouso(m, t) {
+    const neutra = m.bruto === 'None' || m.bruto === 'Open_Palm';
+    if (!neutra || extensao(m.hist, t, 350) > 0.06) { if (m.repouso || !m.acordouEm) m.acordouEm = t; m.repouso = false; }
+    else if (!m.repouso && t - m.nasceu > 1500 && extensao(m.hist, t, 1500) < 0.04) { m.repouso = true; m.acordouEm = 0; m.repousoDesde = t; }
+  }
+
+  _escolherDona(perto, t) {
+    const atual = this._dona;
+    // A dona continua dona enquanto estiver à vista, mesmo parada (pensando no próximo gesto).
+    // Outra mão só assume se estiver bem mais perto da câmera, ou se a dona ficar largada por muito tempo.
+    if (atual && perto.includes(atual)) {
+      const desafiante = perto.find(m => m !== atual && !m.repouso && m.acordouEm && (
+        (t - m.acordouEm > 500 && m.metros != null && atual.metros != null && m.metros < atual.metros * 0.8)
+        || (atual.repouso && t - atual.repousoDesde > 6000 && t - m.acordouEm > 1000)));
+      if (!desafiante) return atual;
+      this._neutralizar(desafiante);
+      return (this._dona = desafiante);
+    }
+    // a dona sumiu por um instante (borrão, mão passando na frente): ninguém toma o lugar dela ainda
+    if (atual && !perto.includes(atual) && this._rastreio.includes(atual) && atual.perto) return null;
+    const candidatas = perto.filter(m => !m.repouso);
+    if (!candidatas.length) return atual && perto.includes(atual) ? atual : (this._dona = null);
+    // a mais próxima da câmera; entre as quase empatadas (15%), a que está fazendo um gesto e,
+    // depois, a mais alta na imagem (a mão largada ao lado do corpo costuma ficar embaixo)
+    const longe = m => m.metros ?? 0.3 / m.tamanho;
+    const perto0 = Math.min(...candidatas.map(longe));
+    const nova = candidatas.filter(m => longe(m) <= perto0 * 1.15).sort((a, b) =>
+      (+(a.bruto === 'None' || a.bruto === 'Open_Palm') - +(b.bruto === 'None' || b.bruto === 'Open_Palm')) || a.palma.y - b.palma.y)[0];
+    if (nova !== atual) this._neutralizar(nova);
+    return (this._dona = nova);
+  }
+
+  _acao(nome, dados, recargaMs) {
+    this._ultimaAcao = performance.now();
+    this._emitir(nome, dados, recargaMs);
   }
 
   _atualizarGesto(m, t) {
     // estabiliza o gesto (o classificador oscila entre quadros)
     if (m.bruto === m.candidato) m.conta++;
-    else { m.candidato = m.bruto; m.conta = 1; }
+    else { m.candidato = m.bruto; m.conta = 1; m.candidatoDesde = t; }
     const anterior = m.gesto;
-    if (m.conta >= ESTAVEL && m.candidato !== m.gesto) {
+    if (m.conta >= 2 && t - m.candidatoDesde >= ESTAVEL_MS && m.candidato !== m.gesto) {
       m.gesto = m.candidato; m.desde = t; m.disparado = false;
     }
+
+    // "armada" = a mão parou por um instante. Movimentos (deslizar, rolar) só valem a partir daí:
+    // assim a volta para a posição neutra, logo depois de um gesto, não conta como outro gesto.
+    if (extensao(m.hist, t, 300) < 0.035) {
+      if (!m.quietoDesde) m.quietoDesde = t;
+      if (t - m.quietoDesde >= 250) m.armado = true;
+    } else m.quietoDesde = 0;
+    const livre = t - (this._ultimaAcao || 0) > 900;   // um gesto de cada vez
 
     // ── punho fechado acumula energia; abrir a mão solta uma explosão ──
     if (m.gesto === 'Closed_Fist') {
       if (!m.punhoDesde) m.punhoDesde = t;
       m.carga = Math.min(1, (t - m.punhoDesde) / 1600);
     } else if (m.punhoDesde) {
-      if (anterior === 'Closed_Fist' && m.carga > 0.18) m.soltouPunho = t;
+      // fechar a mão de passagem (indo para outro gesto) não carrega o suficiente
+      if (anterior === 'Closed_Fist' && m.carga >= 0.35) m.soltouPunho = t;
       m.punhoDesde = 0;
     }
-    if (m.soltouPunho && (m.gesto === 'Open_Palm' || m.gesto === 'None' || m.gesto === 'ILoveYou')) {
-      if (t - m.soltouPunho < 700) this._emitir('explosao', { x: m.palma.x, y: m.palma.y, carga: m.carga }, 500);
+    if (m.soltouPunho && m.gesto === 'Open_Palm') {
+      if (t - m.soltouPunho < 800) { this._acao('explosao', { x: m.palma.x, y: m.palma.y, carga: m.carga }, 500); m.armado = false; }
       m.soltouPunho = 0; m.carga = 0;
-    } else if (m.soltouPunho && t - m.soltouPunho > 700) { m.soltouPunho = 0; m.carga = 0; }
+    } else if (m.soltouPunho && t - m.soltouPunho > 800) { m.soltouPunho = 0; m.carga = 0; }
     if (m.gesto !== 'Closed_Fist' && !m.soltouPunho) m.carga = Math.max(0, m.carga - 0.05);
 
-    // ── gestos que disparam ações ao serem mantidos ──
+    // ── gestos que disparam ações ao serem mantidos: precisa segurar PARADO ──
+    // (uma pose que aparece de passagem, com a mão em movimento, não conta)
     const acao = ACOES[m.gesto];
-    if (acao && !m.disparado && t - m.desde > SEGURAR_MS) {
-      m.disparado = true;
-      this._emitir(acao, { x: m.palma.x, y: m.palma.y }, 1500);
+    if (acao && !m.disparado && livre && t - m.desde > SEGURAR_MS && extensao(m.hist, t, SEGURAR_MS) < 0.07) {
+      m.disparado = true; m.armado = false;
+      this._acao(acao, { x: m.palma.x, y: m.palma.y }, 1500);
     }
 
-    // ── desenhar no ar: indicador apontado ou pinça ──
-    m.desenhando = m.gesto === 'Pointing_Up' || m.pinca;
+    // ── desenhar no ar: indicador apontado, ou pinça com os outros dedos abertos ──
+    const dedosAbertos = dist(m.pontos[12], m.pontos[0]) > 1.5 * m.tamanho;
+    m.pincaConta = m.pinca && dedosAbertos && m.candidato !== 'Closed_Fist' ? m.pincaConta + 1 : 0;
+    m.desenhando = m.gesto === 'Pointing_Up' || m.pincaConta >= 2;
+    if (m.gesto === 'Closed_Fist' || m.desenhando) { m.armado = false; m.pendente = null; return; }
 
-    // ── movimento: deslizar e acenar ──
-    m.hist.push({ x: m.palma.x, y: m.palma.y, t });
-    while (m.hist.length && t - m.hist[0].t > 1600) m.hist.shift();
-    if (m.gesto === 'Closed_Fist' || m.desenhando) return;
+    // movimento confirmado um instante depois: se a mão saiu por baixo (baixando para descansar), não vale
+    if (m.pendente) {
+      if (t >= m.pendente.ate) {
+        const p = m.pendente; m.pendente = null;
+        if (m.palma.y < 0.9 && t - p.criado < 700) {
+          this._acao(p.nome, p.dados, 850);
+          m.retorno = { eixo: p.eixo, dir: p.dir, t };
+        }
+      }
+      return;
+    }
 
-    // deslizar: a palma percorre ~1/4 da tela na horizontal em menos de 0,5 s
-    const janela = m.hist.filter(h => t - h.t < 500);
+    // ── deslizar (para o lado) e rolar (mão aberta para cima/baixo) ──
+    const janela = m.hist.filter(h => t - h.t < 450);
     if (janela.length >= 2) {
       const dx = m.palma.x - janela[0].x, dy = m.palma.y - janela[0].y;
-      if (Math.abs(dx) > 0.25 && Math.abs(dy) < Math.abs(dx) * 0.7) {
-        this._emitir('deslizar', { dir: Math.sign(dx), y: m.palma.y }, 850);
-        m.hist = [];
-        return;
-      }
-      // para cima/baixo, com a mão aberta: rola a lista da Sala (mão fechada ou baixando à toa não conta)
-      if (Math.abs(dy) > 0.25 && Math.abs(dx) < Math.abs(dy) * 0.7 && m.gesto === 'Open_Palm') {
-        this._emitir('rolar', { dir: Math.sign(dy), x: m.palma.x, y: m.palma.y }, 700);
-        m.hist = [];
+      const lado = Math.abs(dx) > 0.22 && Math.abs(dy) < Math.abs(dx) * 0.6;
+      const vertical = !lado && Math.abs(dy) > 0.22 && Math.abs(dx) < Math.abs(dy) * 0.6 && m.gesto === 'Open_Palm';
+      if (lado || vertical) {
+        const eixo = lado ? 'x' : 'y', dir = Math.sign(lado ? dx : dy);
+        // depois de um deslize, o primeiro movimento no sentido contrário é a mão voltando: ignora
+        const volta = m.retorno && m.retorno.eixo === eixo && m.retorno.dir === -dir && t - m.retorno.t < 2500;
+        if (volta) m.retorno = null;
+        else if (m.armado && livre) {
+          m.pendente = {
+            nome: lado ? 'deslizar' : 'rolar', eixo, dir, criado: t, ate: t + 180,
+            dados: lado ? { dir, y: m.palma.y } : { dir, x: m.palma.x, y: m.palma.y },
+          };
+        }
+        m.hist = [m.hist.at(-1)]; m.armado = false; m.quietoDesde = 0;
         return;
       }
     }
 
-    // acenar ("tchau"): a palma vai e volta várias vezes, em pouco espaço
-    if (m.gesto === 'Open_Palm' && m.hist.length > 8) {
+    // ── acenar ("tchau"): a palma vai e volta várias vezes, em pouco espaço ──
+    if (m.gesto === 'Open_Palm' && m.hist.length > 8 && livre) {
       let viradas = 0, dirAnt = 0, ext = m.hist[0].x;
       for (const h of m.hist) {
         const d = h.x - ext;
@@ -245,7 +336,18 @@ export class Maos {
         }
       }
       const xs = m.hist.map(h => h.x), amp = Math.max(...xs) - Math.min(...xs);
-      if (viradas >= 3 && amp < 0.3) { this._emitir('oi', { x: m.palma.x, y: m.palma.y }, 6000); m.hist = []; }
+      if (viradas >= 3 && amp < 0.3) { this._acao('oi', { x: m.palma.x, y: m.palma.y }, 6000); m.hist = [m.hist.at(-1)]; m.armado = false; }
     }
   }
+}
+
+/** Quanto a palma andou numa janela de tempo (diagonal da caixa que contém os pontos). */
+function extensao(hist, t, ms) {
+  let x0 = 1, x1 = 0, y0 = 1, y1 = 0, n = 0;
+  for (let i = hist.length - 1; i >= 0 && t - hist[i].t <= ms; i--) {
+    const h = hist[i]; n++;
+    if (h.x < x0) x0 = h.x; if (h.x > x1) x1 = h.x;
+    if (h.y < y0) y0 = h.y; if (h.y > y1) y1 = h.y;
+  }
+  return n > 1 ? Math.hypot(x1 - x0, y1 - y0) : 0;
 }
