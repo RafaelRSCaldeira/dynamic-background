@@ -24,6 +24,11 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
       </section>
       <section class="aj-secao">
         <div class="aj-titulo"><h3>Transcrição da fala</h3><span class="aj-sub" data-whisper-sub></span></div>
+        <div class="aj-idiomas" role="radiogroup" aria-label="Idioma falado na sala" data-idioma>
+          <button role="radio" data-valor="pt"><b>Português</b><small>pt-BR</small></button>
+          <button role="radio" data-valor="en"><b>English</b><small>en-US</small></button>
+          <button role="radio" data-valor="auto"><b>Detectar</b><small>automático</small></button>
+        </div>
         <p class="aj-ajuda">Modelos maiores entendem bem melhor conversas naturais, sotaques e nomes. Com GPU NVIDIA, use o <b>large-v3-turbo</b>.</p>
         <div class="aj-lista" data-whisper></div>
       </section>
@@ -51,7 +56,7 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
   const retorno = criarRetorno($('[data-retorno]'), { enviar });
   if (new URLSearchParams(location.search).has('debug')) window.__retorno = retorno;
 
-  let sala = {}, catalogo = null, buscando = false, pedidoWhisper = null;
+  let sala = {}, catalogo = null, buscando = false, pedidoWhisper = null, pedidoIdioma = null;
 
   // ── dados ────────────────────────────────────────────────
   const buscar = async () => {
@@ -150,9 +155,23 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
       : !camera.ativa ? 'Ligue a câmera para brincar com as mãos.' : (st || '');
   };
 
-  const render = () => { if (!dlg.open) return; retorno.render(sala, catalogo?.microfones); renderWhisper(); renderOllama(); renderCamera(); };
+  const renderIdioma = () => {
+    const atual = pedidoIdioma || sala.idioma || 'pt';
+    for (const b of dlg.querySelectorAll('[data-idioma] button')) {
+      const sel = b.dataset.valor === atual;
+      b.classList.toggle('sel', sel); b.setAttribute('aria-checked', sel);
+    }
+  };
+
+  const render = () => { if (!dlg.open) return; retorno.render(sala, catalogo?.microfones); renderIdioma(); renderWhisper(); renderOllama(); renderCamera(); };
 
   // ── eventos ──────────────────────────────────────────────
+  $('[data-idioma]').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    pedidoIdioma = b.dataset.valor;
+    enviar({ acao: 'idioma', valor: pedidoIdioma });
+    renderIdioma();
+  });
   $('[data-whisper]').addEventListener('click', e => {
     const b = e.target.closest('.aj-opcao'); if (!b || b.disabled) return;
     const nome = b.dataset.nome;
@@ -225,6 +244,7 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
       const antes = sala.estado;
       sala = { ...sala, ...msg };
       if (pedidoWhisper && sala.whisper_modelo === pedidoWhisper) pedidoWhisper = null; // servidor confirmou
+      if (pedidoIdioma && sala.idioma === pedidoIdioma) pedidoIdioma = null;
       if (antes === 'carregando' && sala.estado !== 'carregando' && dlg.open) buscar(); // atualiza "Baixado"
       render();
     },

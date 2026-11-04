@@ -18,6 +18,12 @@ export function criarRetorno(el, { enviar }) {
       <span class="rt-db" data-db>—</span>
     </div>
     <p class="aj-ajuda rt-dica" data-dica>Fale normalmente: a barra deve passar da marca do meio sem encostar no fim.</p>
+    <div class="rt-ganho">
+      <span>Ganho</span>
+      <input type="range" min="-12" max="24" step="1" value="0" data-ganho aria-label="Ganho do microfone em dB">
+      <output data-ganho-v>0 dB</output>
+      <button class="aj-mini" data-ganho-zero title="Voltar para 0 dB">Zerar</button>
+    </div>
     <div class="rt-vivo">
       <button class="aj-mini" data-vivo>${mini.fone}<span>Ouvir ao vivo</span></button>
       <label class="rt-volume"><span>Volume</span><input type="range" min="0" max="4" step="0.1" value="1" data-volume></label>
@@ -104,6 +110,21 @@ export function criarRetorno(el, { enviar }) {
   };
 
   $('[data-vivo]').addEventListener('click', () => definirVivo(!vivo));
+
+  // ── ganho do microfone (aplicado no servidor, antes da detecção de fala e do Whisper) ──
+  const ganhoEl = $('[data-ganho]');
+  let arrastandoGanho = false, tGanho = 0;
+  const mostrarGanho = db => {
+    $('[data-ganho-v]').textContent = `${db > 0 ? '+' : ''}${db} dB`;
+    ganhoEl.style.setProperty('--p', `${((db + 12) / 36) * 100}%`);
+  };
+  const enviarGanho = () => enviar({ acao: 'ganho_mic', db: +ganhoEl.value });
+  ganhoEl.addEventListener('input', () => {
+    arrastandoGanho = true; mostrarGanho(+ganhoEl.value);
+    clearTimeout(tGanho); tGanho = setTimeout(enviarGanho, 120);   // ouve a mudança enquanto arrasta
+  });
+  ganhoEl.addEventListener('change', () => { arrastandoGanho = false; enviarGanho(); });
+  $('[data-ganho-zero]').addEventListener('click', () => { ganhoEl.value = 0; mostrarGanho(0); enviarGanho(); });
   $('[data-volume]').addEventListener('input', e => { if (ganho) ganho.gain.value = +e.target.value; if (audio) audio.volume = Math.min(1, +e.target.value); });
 
   // ── frases ───────────────────────────────────────────────
@@ -111,8 +132,8 @@ export function criarRetorno(el, { enviar }) {
 
   const avisos = f => {
     const a = [];
-    if (f.pico_db > -1) a.push(['ruim', 'Saturado: o som está estourando. Diminua o volume do microfone no Windows.']);
-    else if (f.pico_db < -32) a.push(['ruim', `Muito baixo (pico ${fmtN(f.pico_db, 0)} dB): fale mais perto ou aumente o volume do microfone no Windows.`]);
+    if (f.pico_db > -1) a.push(['ruim', 'Saturado: o som está estourando. Diminua o ganho aqui em cima (ou o volume do microfone no Windows).']);
+    else if (f.pico_db < -32) a.push(['ruim', `Muito baixo (pico ${fmtN(f.pico_db, 0)} dB): fale mais perto ou aumente o ganho aqui em cima.`]);
     else if (f.pico_db < -22) a.push(['meio', 'Um pouco baixo: o ganho automático compensa, mas também amplifica o ruído.']);
     if (!f.texto && !f.descartes?.length) a.push(['meio', 'Nada reconhecido: o detector de voz achou que era só ruído.']);
     return a;
@@ -180,6 +201,11 @@ export function criarRetorno(el, { enviar }) {
     abrir: conectar,
     receber,   // (para testes: /?debug expõe window.__retorno)
     fechar: desconectar,
-    render(sala, lista) { if (lista) mics = lista; renderMics(sala); },
+    render(sala, lista) {
+      if (lista) mics = lista;
+      renderMics(sala);
+      if (!arrastandoGanho && sala.ganho_db != null && +ganhoEl.value !== sala.ganho_db) { ganhoEl.value = sala.ganho_db; }
+      if (!arrastandoGanho) mostrarGanho(+ganhoEl.value);
+    },
   };
 }

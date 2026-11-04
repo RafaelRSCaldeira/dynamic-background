@@ -525,6 +525,21 @@ body:not(.cursor-oculto) #controles { opacity: 1; transform: translate(-50%, 0);
 .rt-nivel.estouro .rt-barra b { background: var(--perigo); box-shadow: 0 0 .5rem var(--perigo); }
 .rt-db { font-size: .8rem; font-variant-numeric: tabular-nums; color: var(--texto-2); text-align: right; }
 .rt-dica { margin-top: .45rem; }
+.rt-ganho { display: grid; grid-template-columns: auto 1fr 3.6rem auto; align-items: center; gap: .8rem; margin: -.2rem 0 1rem; font-size: .8rem; color: var(--texto-2); }
+.rt-ganho input { --p: 33.3%; width: 100%; height: .4rem; margin: 0; appearance: none; -webkit-appearance: none; border-radius: 99px; cursor: pointer;
+  background: linear-gradient(90deg, var(--acento) var(--p), rgba(255, 255, 255, .1) var(--p)); }
+.rt-ganho input::-webkit-slider-thumb { -webkit-appearance: none; width: 1.1rem; height: 1.1rem; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px color-mix(in srgb, var(--acento) 45%, transparent); }
+.rt-ganho input::-moz-range-thumb { width: 1.1rem; height: 1.1rem; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px color-mix(in srgb, var(--acento) 45%, transparent); }
+.rt-ganho input:focus-visible { outline: 2px solid var(--acento); outline-offset: 4px; }
+.rt-ganho output { font-variant-numeric: tabular-nums; text-align: right; color: var(--texto); }
+.aj-idiomas { display: grid; grid-template-columns: repeat(3, 1fr); gap: .45rem; margin: .9rem 0 .2rem; }
+.aj-idiomas button { display: flex; flex-direction: column; align-items: flex-start; gap: .15rem; padding: .6rem .85rem; border-radius: .9rem; cursor: pointer; text-align: left;
+  font: inherit; color: var(--texto); background: rgba(255, 255, 255, .03); border: 1px solid rgba(255, 255, 255, .07); transition: background .25s, border-color .25s; }
+.aj-idiomas button:hover { background: rgba(255, 255, 255, .07); }
+.aj-idiomas button:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+.aj-idiomas button.sel { background: color-mix(in srgb, var(--acento) 12%, transparent); border-color: color-mix(in srgb, var(--acento) 45%, transparent); }
+.aj-idiomas b { font-size: .9rem; font-weight: 500; }
+.aj-idiomas small { font-size: .72rem; color: var(--texto-3); }
 .rt-vivo { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem 1.2rem; }
 .rt-vivo .aj-mini.ativo { background: color-mix(in srgb, var(--acento) 14%, transparent); }
 .rt-vivo .aj-mini.ativo .ui { animation: rt-pulsar 1.4s var(--ease) infinite; }
