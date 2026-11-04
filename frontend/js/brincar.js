@@ -154,16 +154,16 @@ export class Brincar {
     const ids = new Set();
     for (const m of maos) {
       ids.add(m.id);
-      if (m.ativa && m.desenhando) this.luzes.tracar(m.id, m.indicador.x * W, m.indicador.y * H);
+      if (m.desenhando) this.luzes.tracar(m.id, m.indicador.x * W, m.indicador.y * H);
       else this.luzes.soltarTraco(m.id);
-      if (m.ativa && m.carga > .05) this.luzes.sugar(m.palma.x * W, m.palma.y * H, m.carga, dt);
+      if (m.carga > .05) this.luzes.sugar(m.palma.x * W, m.palma.y * H, m.carga, dt);
     }
     for (const id of [...this.luzes.tracos.keys()]) if (!ids.has(id)) this.luzes.soltarTraco(id);
     if (maos.length || !this.luzes.ocioso) this.luzes.quadro(dt, maos);
     else if (!this._limpo) { this.luzes.quadro(dt, []); }
     this._limpo = !maos.length && this.luzes.ocioso;
 
-    const m = maos.find(x => x.ativa);   // só a mão que comanda mexe no fundo
+    const m = this.maos.principal && maos.includes(this.maos.principal) ? this.maos.principal : null;   // a mão que guia o fundo
     if (!m) return null;
     const alvo = m.desenhando ? m.indicador : m.palma;
     return { x: alvo.x * W, y: alvo.y * H, forca: m.carga > .05 ? 0 : 1, atrair: m.carga };

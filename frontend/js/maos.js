@@ -2,9 +2,9 @@
 // O código e o modelo vêm do próprio servidor (/visao), que os baixa uma vez e guarda em cache.
 //
 // Saída:
-//   maos.maos  → [{ id, pontos:[{x,y}]×21, palma, indicador, gesto, pinca, carga, desenhando, ativa }]
-//                coordenadas normalizadas da TELA (0..1, já espelhadas como num espelho)
-//   maos.ativa → a única mão que comanda (as outras só aparecem na tela)
+//   maos.maos  → [{ id, pontos:[{x,y}]×21, palma, indicador, gesto, pinca, carga, desenhando, repouso }]
+//                coordenadas normalizadas da TELA (0..1, já espelhadas como num espelho).
+//                Cada mão faz gestos por conta própria (as duas mãos podem brincar).
 //   aoEvento(nome, dados) → 'joinha' | 'cena' | 'coracoes' | 'desfazer' | 'explosao' | 'deslizar' | 'rolar' | 'oi'
 //                          | 'apareceu' | 'longe' (alguém além da distância máxima tentou brincar)
 
@@ -143,22 +143,27 @@ export class Maos {
         metros: real && angulo ? real / angulo : null,
         indicador: pontos[8],
         bruto: mao.score > 0.55 ? mao.gesto : 'None',
+        lado: mao.lado,
         pinca: dist(pontos[4], pontos[8]) / tamanho < 0.33,
       };
     });
 
-    // associa cada mão detectada à mão anterior mais próxima (para manter o histórico).
+    // Associa cada mão detectada à mão do quadro anterior (para manter o histórico de cada uma).
+    // Os pares mais próximos são casados primeiro, e trocar esquerda por direita custa caro:
+    // assim as duas mãos não "trocam de identidade" quando passam perto uma da outra.
     // Mãos que somem por pouco tempo (borrão de um gesto rápido) continuam no rastreio por 400 ms.
     const anteriores = this._rastreio, usadas = new Set(), vistas = [];
-    for (const d of detectadas) {
-      let melhor = null, md = anteriores.length === 1 && detectadas.length === 1 ? 0.6 : 0.3;
-      for (const a of anteriores) {
-        if (usadas.has(a)) continue;
-        const dd = dist(a.palma, d.palma);
-        if (dd < md) { md = dd; melhor = a; }
-      }
-      if (melhor) usadas.add(melhor);
-      const m = melhor || this._novaMao(t);
+    const limite = anteriores.length === 1 && detectadas.length === 1 ? 0.6 : 0.3;
+    const pares = [];
+    detectadas.forEach((d, i) => anteriores.forEach(a => {
+      const custo = dist(a.palma, d.palma) + (a.lado && d.lado && a.lado !== d.lado ? 0.2 : 0);
+      if (custo < limite) pares.push({ i, a, custo });
+    }));
+    pares.sort((p, q) => p.custo - q.custo);
+    const casada = new Map();
+    for (const p of pares) if (!casada.has(p.i) && !usadas.has(p.a)) { casada.set(p.i, p.a); usadas.add(p.a); }
+    for (const [i, d] of detectadas.entries()) {
+      const m = casada.get(i) || this._novaMao(t);
       Object.assign(m, d, { visto: t });
       // só brinca quem está perto (com folga de 12% para não piscar bem na fronteira)
       if (m.metros == null) m.perto = true;
@@ -172,17 +177,15 @@ export class Maos {
     const perdidas = anteriores.filter(a => !usadas.has(a) && t - a.visto < 400);
     this._rastreio = [...vistas, ...perdidas];
 
-    // Só UMA mão comanda por vez (a "dona"). A outra mão parada, ou a de quem está do lado,
-    // aparece na tela mas não dispara nada.
+    // Cada mão perto da câmera faz gestos por conta própria. Uma mão parada não atrapalha:
+    // ela não dispara nada (movimentos exigem movimento, poses exigem a pose segurada).
     const perto = vistas.filter(m => m.perto);
-    const dona = this._escolherDona(perto, t);
     for (const m of vistas) {
-      m.ativa = m === dona;
-      if (m.ativa) this._atualizarGesto(m, t);
+      if (m.perto) this._atualizarGesto(m, t);
       else this._neutralizar(m);
     }
     this.maos = perto;
-    this.ativa = dona;
+    this.principal = this._escolherPrincipal(perto);
 
     const ds = vistas.map(m => m.metros).filter(v => v != null);
     this.distancia = ds.length ? Math.min(...ds) : null;
@@ -200,7 +203,7 @@ export class Maos {
     };
   }
 
-  /** Mão que não comanda: esquece qualquer gesto em andamento (ao virar dona, começa do zero). */
+  /** Mão longe demais: esquece qualquer gesto em andamento (ao chegar perto, começa do zero). */
   _neutralizar(m) {
     Object.assign(m, { gesto: 'None', candidato: 'None', conta: 0, carga: 0, punhoDesde: 0, soltouPunho: 0,
       pincaConta: 0, desenhando: false, disparado: false, armado: false, quietoDesde: 0, pendente: null });
@@ -213,30 +216,13 @@ export class Maos {
     else if (!m.repouso && t - m.nasceu > 1500 && extensao(m.hist, t, 1500) < 0.04) { m.repouso = true; m.acordouEm = 0; m.repousoDesde = t; }
   }
 
-  _escolherDona(perto, t) {
-    const atual = this._dona;
-    // A dona continua dona enquanto estiver à vista, mesmo parada (pensando no próximo gesto).
-    // Outra mão só assume se estiver bem mais perto da câmera, ou se a dona ficar largada por muito tempo.
-    if (atual && perto.includes(atual)) {
-      const desafiante = perto.find(m => m !== atual && !m.repouso && m.acordouEm && (
-        (t - m.acordouEm > 500 && m.metros != null && atual.metros != null && m.metros < atual.metros * 0.8)
-        || (atual.repouso && t - atual.repousoDesde > 6000 && t - m.acordouEm > 1000)));
-      if (!desafiante) return atual;
-      this._neutralizar(desafiante);
-      return (this._dona = desafiante);
-    }
-    // a dona sumiu por um instante (borrão, mão passando na frente): ninguém toma o lugar dela ainda
-    if (atual && !perto.includes(atual) && this._rastreio.includes(atual) && atual.perto) return null;
-    const candidatas = perto.filter(m => !m.repouso);
-    if (!candidatas.length) return atual && perto.includes(atual) ? atual : (this._dona = null);
-    // a mais próxima da câmera; entre as quase empatadas (15%), a que está fazendo um gesto e,
-    // depois, a mais alta na imagem (a mão largada ao lado do corpo costuma ficar embaixo)
-    const longe = m => m.metros ?? 0.3 / m.tamanho;
-    const perto0 = Math.min(...candidatas.map(longe));
-    const nova = candidatas.filter(m => longe(m) <= perto0 * 1.15).sort((a, b) =>
-      (+(a.bruto === 'None' || a.bruto === 'Open_Palm') - +(b.bruto === 'None' || b.bruto === 'Open_Palm')) || a.palma.y - b.palma.y)[0];
-    if (nova !== atual) this._neutralizar(nova);
-    return (this._dona = nova);
+  /** A mão que guia o "ponteiro" do fundo (aurora e partículas). Só isso: gestos valem para todas.
+   *  Fica com a mesma mão enquanto ela estiver à vista, para o ponteiro não pular entre as duas. */
+  _escolherPrincipal(perto) {
+    const atual = this.principal;
+    const ocupada = m => m.desenhando || m.carga > .05;
+    if (atual && perto.includes(atual) && (ocupada(atual) || !perto.some(m => m !== atual && ocupada(m)))) return atual;
+    return perto.find(ocupada) || perto.find(m => !m.repouso) || perto[0] || null;
   }
 
   _acao(nome, dados, recargaMs) {

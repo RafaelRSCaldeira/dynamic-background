@@ -68,7 +68,7 @@ Com a câmera ligada, a mão de quem está na frente da tela vira uma **constela
 | 👎 Polegar para baixo | Limpa tudo e volta ao normal |
 
 - Os gestos só valem para quem está a **menos de 2 m** da câmera (`distancia_gestos` no `config.toml`); quem passa ao fundo é ignorado, e quem tenta de longe recebe um aviso para chegar mais perto. A distância é estimada pelo tamanho real da mão e aparece em Ajustes; se não bater com a real, ajuste `campo_visao` (o ângulo da webcam).
-- **Só uma mão comanda:** a primeira que se levanta e faz algo. A outra mão parada e a de quem está do lado aparecem mais apagadas e não disparam nada. Outra mão só assume se a que comanda sair de cena, ficar largada por mais de 6 s ou se alguém chegar bem mais perto da câmera.
+- **As duas mãos brincam:** cada mão faz gestos por conta própria. Uma mão parada não dispara nada (fica um pouco mais apagada na tela), e as mãos não trocam de identidade quando passam perto uma da outra.
 - **Contra falsos positivos:** deslizar e rolar só valem depois de a mão parar por um instante, e a volta para a posição neutra logo depois de um deslize é ignorada. Gestos como 👍 e ✌️ precisam ser segurados com a mão parada (uma pose que aparece de passagem não conta). Um gesto de cada vez, com um pequeno intervalo entre eles, e baixar a mão para descansar não rola a lista.
 - Com a mão bem visível e o ambiente iluminado, o reconhecimento fica mais firme.
 - O reconhecimento roda num *worker* (fora da thread da página), então a animação não trava enquanto as mãos são analisadas.

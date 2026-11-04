@@ -45,6 +45,7 @@ self.onmessage = async ({ data }) => {
           pontos: lm.map(p => [p.x, p.y]),
           mundo: (r.worldLandmarks?.[i] || []).map(p => [p.x, p.y]),  // em metros: dá o tamanho real da mão
           gesto: g?.categoryName || 'None', score: g?.score || 0,
+          lado: r.handedness?.[i]?.[0]?.categoryName || '',   // esquerda/direita: ajuda a não trocar as mãos
         };
       });
     } catch (e) { /* quadro ruim: ignora */ }

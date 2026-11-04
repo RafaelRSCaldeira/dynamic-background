@@ -203,7 +203,7 @@ export class Luzes {
     ctx.globalCompositeOperation = 'lighter';
     for (const m of maos) {
       const P = m.pontos.map(p => ({ x: p.x * w, y: p.y * h }));
-      const quente = m.carga || 0, k = m.ativa === false ? .3 : 1;   // mão que não comanda: mais apagada
+      const quente = m.carga || 0, k = m.repouso ? .55 : 1;   // mão parada, descansando: um pouco mais apagada
       const cr = Math.round(ar + (255 - ar) * quente), cg = Math.round(ag + (150 - ag) * quente), cb = Math.round(ab + (60 - ab) * quente);
       ctx.strokeStyle = `rgba(${cr},${cg},${cb},${.32 * k})`; ctx.lineWidth = 1.6 * u;
       ctx.beginPath();
