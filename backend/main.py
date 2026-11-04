@@ -21,7 +21,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import dados, ia, modelos, privacidade
+from . import dados, ia, modelos, privacidade, visao
 from .config import CONFIG, FRONTEND
 from .hub import Hub
 from .sala import Sala
@@ -147,6 +147,11 @@ async def ws(websocket: WebSocket):
         pass
     finally:
         hub.remover(websocket)
+
+
+@app.get("/visao/{caminho:path}")
+async def api_visao(caminho: str):
+    return await visao.servir(app.state.http, caminho)
 
 
 @app.get("/remote")

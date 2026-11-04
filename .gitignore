@@ -4,3 +4,4 @@ __pycache__/
 logs/
 preferencias.json
 *.tmp
+cache/
