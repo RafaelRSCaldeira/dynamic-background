@@ -4,6 +4,7 @@ Tela cheia com widgets informativos sobre um fundo animado que reage ao mouse, �
 Ouve a sala e mostra destaques da conversa gerados **localmente** (Whisper + Ollama), com mute de verdade.
 
 - **Widgets:** relógio com saudação e próximo feriado, clima atual, próximas 24 h (interativo), próximos 7 dias, sol e lua, câmbio, notícias, sala.
+- **Sala:** os destaques da IA vão se **acumulando numa lista** (o mais novo no topo). Arraste para cima ou para baixo com o mouse ou o dedo, use a roda do mouse ou a mão aberta na câmera. Se chegar coisa nova enquanto você lê, a lista não pula: aparece um aviso "↑ novos".
 - **Fundo:** aurora em WebGL que muda de cor com a hora real do nascer e do pôr do sol e com o clima. Chuva, neve, névoa, estrelas cadentes e relâmpagos de acordo com a previsão.
 - **Interação:** o mouse "mexe" a aurora e afasta as partículas, um clique solta uma onda, e os cards se inclinam e brilham sob o cursor. Na câmera, o movimento vira um segundo ponteiro e um aceno amplo vale como clique. A voz acelera o fluxo.
 - **Responsivo:** tudo é medido em `rem` proporcional ao menor lado da tela, então o painel fica idêntico em HD, Full HD e 4K. Há layouts para horizontal, vertical, telas quadradas (4:3, 5:4) e ultrawide.
@@ -43,6 +44,7 @@ Para iniciar junto com o Windows, crie um atalho para `iniciar.bat` em `shell:st
 
 ## Ajustes (botão ⚙ ou tecla `A`)
 
+- **Microfone e retorno:** escolha o microfone (pelo WASAPI, na taxa nativa do aparelho) e veja o volume real em dB. **Ouvir ao vivo** toca o que o microfone capta (use fone de ouvido). Em **O que o Whisper ouviu**, cada uma das últimas frases pode ser ouvida exatamente como chegou à transcrição, ao lado do texto que saiu e de avisos como "muito baixo" ou "saturado". É o primeiro lugar para olhar quando a transcrição erra.
 - **Transcrição da fala:** escolha o modelo do Whisper, de `tiny` a `large-v3`. Se o modelo ainda não foi baixado, ele baixa em segundo plano enquanto o atual continua transcrevendo, e a troca acontece sozinha quando o download termina.
 - **IA da sala:** lista **todos** os modelos instalados no Ollama. Basta clicar para trocar. O modelo anterior é descarregado da VRAM, e os destaques são gerados de novo com o modelo escolhido. Modelos de embedding aparecem na lista, mas não podem ser escolhidos.
 - **Câmera:** liga e desliga a câmera, explica o que ela faz e mostra um medidor do movimento detectado no momento.
@@ -57,6 +59,7 @@ Com a câmera ligada, a mão de quem está na frente da tela vira uma **constela
 |---|---|
 | 👋 Acenar | O painel dá oi e mostra o guia de gestos |
 | 🫲 Deslizar a mão para o lado | **Modo destaque:** traz um card grande para o centro; cada deslize mostra o próximo |
+| 🖐️ Mão aberta para cima ou para baixo | Rola a lista da Sala |
 | ✊ Fechar a mão… ✋ e abrir | Junta energia (as partículas são puxadas para a mão) e solta uma explosão |
 | ☝️ Apontar ou fazer pinça | Desenha com luz no ar (o traço some em 4 s) |
 | 👍 Joinha | Fogos de artifício |
@@ -64,7 +67,9 @@ Com a câmera ligada, a mão de quem está na frente da tela vira uma **constela
 | 🤟 Te amo | Chuva de corações |
 | 👎 Polegar para baixo | Limpa tudo e volta ao normal |
 
-- Funciona melhor a 1–2 m da câmera, com a mão bem visível e o ambiente iluminado.
+- Os gestos só valem para quem está a **menos de 2 m** da câmera (`distancia_gestos` no `config.toml`); quem passa ao fundo é ignorado, e quem tenta de longe recebe um aviso para chegar mais perto. A distância é estimada pelo tamanho real da mão e aparece em Ajustes; se não bater com a real, ajuste `campo_visao` (o ângulo da webcam).
+- Com a mão bem visível e o ambiente iluminado, o reconhecimento fica mais firme.
+- O reconhecimento roda num *worker* (fora da thread da página), então a animação não trava enquanto as mãos são analisadas.
 - A cena escolhida com ✌️ volta sozinha ao clima real depois de 4 minutos, e o destaque se fecha sozinho depois de pouco mais de 1 minuto.
 - Os gestos podem ser desligados em Ajustes. Sem eles, a câmera continua detectando movimento: quem se mexe "mexe" na aurora, e sem ninguém por `ociosidade_minutos` o painel entra em **modo ambiente**.
 - O reconhecimento de mãos usa o MediaPipe e roda **dentro do navegador**. Na primeira vez, o servidor baixa o modelo (~18 MB) para `cache/visao`; depois funciona offline.
@@ -74,6 +79,7 @@ Com a câmera ligada, a mão de quem está na frente da tela vira uma **constela
 - **Mute fecha o microfone** de verdade, e o Windows deixa de mostrar o ícone de mic em uso. Se você mutar durante uma transcrição, o texto é descartado.
 - **Mute automático:** quando Teams, Zoom, Meet (no navegador), Discord etc. estão usando o microfone, o painel muta sozinho. A detecção usa o registro de uso de microfone do próprio Windows.
 - **Nada é gravado em disco.** O áudio existe só na memória até ser transcrito. A transcrição fica na memória por `retencao_minutos` (10 por padrão). O botão **Esquecer** apaga tudo na hora.
+- **Retorno do microfone:** só existe na própria tela (o `/remote` não tem acesso) e só enquanto os Ajustes estão abertos. As últimas 6 frases ficam na memória para você ouvir e são apagadas ao fechar os Ajustes, mutar ou clicar em Esquecer.
 - **Câmera:** o movimento é detectado em 64×48 pixels em tons de cinza, e as mãos são reconhecidas pelo MediaPipe, tudo dentro do navegador. Nenhuma imagem é gravada nem sai do computador.
 - **Controle pelo celular:** com `rede_local = true` no `config.toml`, abra `http://<ip-do-pc>:8765/remote`. Clientes remotos recebem **apenas** o estado do microfone, nunca a transcrição nem os insights.
 - Avise as pessoas da sala de que existe escuta ativa. O indicador "Ouvindo" fica sempre visível.
@@ -86,6 +92,8 @@ Os principais itens:
 - `[audio] sensibilidade`: aumente se falas baixas não forem captadas; diminua se ruído virar texto.
 - `[ia] modelo`: o modelo inicial do Ollama; em Ajustes dá para escolher qualquer modelo instalado. Com 8 GB de VRAM, prefira modelos de até ~8B, porque o Whisper também usa a GPU (o `large-v3-turbo` ocupa ~1,6 GB).
 - `[tela] fps_max` / `qualidade_fundo`: reduza para economizar energia num painel 24/7.
+- `[camera] distancia_gestos` / `campo_visao`: até quantos metros os gestos valem e o ângulo de visão da webcam usado para estimar a distância.
+- `[audio] microfone`: parte do nome do microfone; o escolhido em Ajustes vale mais.
 - `[camera] ociosidade_minutos`: sem movimento por esse tempo, o painel entra em **modo ambiente** (só relógio e sala em destaque). Volta assim que alguém se mexe.
 
 ## GPU
@@ -105,14 +113,17 @@ backend/
   dados.py         clima, ar, câmbio, feriados e notícias (APIs gratuitas, com cache)
   modelos.py       catálogo do Whisper, lista de modelos do Ollama, preferencias.json
   visao.py         baixa uma vez e serve o reconhecedor de mãos (cache/visao)
+  retorno.py       retorno do microfone: ao vivo e as últimas frases como o Whisper ouviu
 frontend/
   index.html, css/style.css
   js/main.js       orquestra cena, interação, câmera e atalhos
-  js/ajustes.js    painel de Ajustes (modelos e câmera)
+  js/ajustes.js    painel de Ajustes (microfone, modelos e câmera)
+  js/retorno.js    retorno do microfone (seção dos Ajustes)
   js/fundo.js      shader da aurora (WebGL)
   js/particulas.js chuva, neve, estrelas, poeira e névoa
   js/camera.js     webcam e detecção de movimento
-  js/maos.js       mãos e gestos (MediaPipe): rastreio, deslizar, acenar, punho→explosão
+  js/maos.js       mãos e gestos: rastreio, distância, deslizar, acenar, punho→explosão
+  js/maos-worker.js  roda o MediaPipe fora da thread principal
   js/luzes.js      efeitos de luz: constelação da mão, fogos, corações, desenho no ar
   js/brincar.js    liga cada gesto ao seu efeito; aviso e guia de gestos
   js/destaque.js   modo destaque (um card grande no centro)
