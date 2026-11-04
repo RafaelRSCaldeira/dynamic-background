@@ -44,7 +44,8 @@ Para iniciar junto com o Windows, crie um atalho para `iniciar.bat` em `shell:st
 
 ## Ajustes (botão ⚙ ou tecla `A`)
 
-- **Microfone e retorno:** escolha o microfone (pelo WASAPI, na taxa nativa do aparelho) e veja o volume real em dB. **Ouvir ao vivo** toca o que o microfone capta (use fone de ouvido). Em **O que o Whisper ouviu**, cada uma das últimas frases pode ser ouvida exatamente como chegou à transcrição, ao lado do texto que saiu e de avisos como "muito baixo" ou "saturado". É o primeiro lugar para olhar quando a transcrição erra.
+- **Microfone e retorno:** escolha o microfone (pelo WASAPI, na taxa nativa do aparelho) veja o volume real em dB e ajuste o **ganho** (de −12 a +24 dB; vale para a detecção de fala, para o Whisper e para o retorno). **Ouvir ao vivo** toca o que o microfone capta (use fone de ouvido). Em **O que o Whisper ouviu**, cada uma das últimas frases pode ser ouvida exatamente como chegou à transcrição, ao lado do texto que saiu e de avisos como "muito baixo" ou "saturado". É o primeiro lugar para olhar quando a transcrição erra.
+- **Idioma:** Português (pt-BR), English (en-US) ou Detectar automaticamente. Os destaques da IA continuam em português.
 - **Transcrição da fala:** escolha o modelo do Whisper, de `tiny` a `large-v3`. Se o modelo ainda não foi baixado, ele baixa em segundo plano enquanto o atual continua transcrevendo, e a troca acontece sozinha quando o download termina.
 - **IA da sala:** lista **todos** os modelos instalados no Ollama. Basta clicar para trocar. O modelo anterior é descarregado da VRAM, e os destaques são gerados de novo com o modelo escolhido. Modelos de embedding aparecem na lista, mas não podem ser escolhidos.
 - **Câmera:** liga e desliga a câmera, explica o que ela faz e mostra um medidor do movimento detectado no momento.
@@ -97,6 +98,7 @@ Os principais itens:
 - `[tela] fps_max` / `qualidade_fundo`: reduza para economizar energia num painel 24/7.
 - `[camera] distancia_gestos` / `campo_visao`: até quantos metros os gestos valem e o ângulo de visão da webcam usado para estimar a distância.
 - `[audio] microfone`: parte do nome do microfone; o escolhido em Ajustes vale mais.
+- `[audio] idioma` / `ganho_db`: idioma falado (`pt`, `en` ou `auto`) e ganho do microfone em dB; ambos também em Ajustes.
 - `[camera] ociosidade_minutos`: sem movimento por esse tempo, o painel entra em **modo ambiente** (só relógio e sala em destaque). Volta assim que alguém se mexe.
 
 ## GPU
