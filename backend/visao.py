@@ -20,7 +20,7 @@ log = logging.getLogger("visao")
 VERSAO = "0.10.21"
 _NPM = f"https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@{VERSAO}"
 ARQUIVOS = {
-    "vision_bundle.mjs": (f"{_NPM}/vision_bundle.mjs", "text/javascript"),
+    "vision_bundle.cjs": (f"{_NPM}/vision_bundle.cjs", "text/javascript"),  # carregado pelo worker (importScripts)
     "wasm/vision_wasm_internal.js": (f"{_NPM}/wasm/vision_wasm_internal.js", "text/javascript"),
     "wasm/vision_wasm_internal.wasm": (f"{_NPM}/wasm/vision_wasm_internal.wasm", "application/wasm"),
     "wasm/vision_wasm_nosimd_internal.js": (f"{_NPM}/wasm/vision_wasm_nosimd_internal.js", "text/javascript"),

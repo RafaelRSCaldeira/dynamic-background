@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import threading
 import time
 from collections import deque
@@ -25,6 +26,10 @@ class Sala:
         self.whisper_dispositivo = ""  # cuda | cpu
         self.acordar_ia: asyncio.Event | None = None  # criado pelo laço da IA
         self.ao_trocar_whisper = None  # callback do serviço de áudio
+        self.microfone: str = prefs.get("microfone", cfg_audio.get("microfone") or "")  # "" = padrão do Windows
+        self.microfone_atual = ""      # nome do dispositivo aberto agora
+        self.microfone_taxa = 0
+        self.ao_trocar_microfone = None
         self._trava = threading.RLock()
 
         self.mutado_manual = bool(cfg_audio["iniciar_mutado"])
@@ -40,6 +45,9 @@ class Sala:
 
         self.linhas: deque[dict] = deque(maxlen=500)
         self.insights: dict | None = None
+        # tudo o que a IA já mostrou (resumos e cards), em ordem: a tela vai acrescentando numa lista
+        self.historico: deque[dict] = deque(maxlen=60)
+        self._ids = itertools.count(1)
         self.insights_em: float | None = None
         self.versao = 0  # muda a cada linha nova; a IA só roda quando há novidade
 
@@ -81,8 +89,12 @@ class Sala:
                     whisper_baixando=self.whisper_baixando,
                     whisper_aviso=self.whisper_aviso,
                     whisper_dispositivo=self.whisper_dispositivo,
+                    microfone=self.microfone,
+                    microfone_atual=self.microfone_atual,
+                    microfone_taxa=self.microfone_taxa,
                     linhas=list(self.linhas)[-6:],
                     insights=self.insights,
+                    historico=list(self.historico),
                     insights_em=self.insights_em,
                 )
             return dados
@@ -138,6 +150,22 @@ class Sala:
         if self.ao_trocar_whisper:
             self.ao_trocar_whisper(nome)
 
+    def definir_microfone(self, nome: str) -> None:
+        nome = (nome or "").strip()
+        if nome == self.microfone:
+            return
+        with self._trava:
+            self.microfone = nome
+        modelos.gravar(microfone=nome)
+        self.publicar()
+        if self.ao_trocar_microfone:
+            self.ao_trocar_microfone()
+
+    def definir_microfone_atual(self, nome: str, taxa: int) -> None:
+        with self._trava:
+            self.microfone_atual, self.microfone_taxa = nome, taxa
+        self.publicar()
+
     def definir_baixando(self, nome: str, aviso: str = "") -> None:
         with self._trava:
             self.whisper_baixando, self.whisper_aviso = nome, aviso
@@ -149,9 +177,24 @@ class Sala:
         self.publicar()
 
     def definir_insights(self, insights: dict) -> None:
+        agora = time.time()
         with self._trava:
-            self.insights, self.insights_em = insights, time.time()
+            self.insights, self.insights_em = insights, agora
+            self._acrescentar(insights, agora)
         self.publicar()
+
+    def _acrescentar(self, ins: dict, t: float) -> None:
+        """Acrescenta ao histórico só o que é novo: um resumo diferente do último e cards ainda não vistos."""
+        resumo = (ins.get("resumo") or "").strip()
+        ultimo = next((h for h in reversed(self.historico) if h["tipo"] == "resumo"), None)
+        if resumo and (not ultimo or ultimo["texto"] != resumo):
+            self.historico.append({"id": next(self._ids), "t": t, "tipo": "resumo", "texto": resumo,
+                                   "topicos": list(ins.get("topicos") or [])})
+        vistos = {(h["tipo"], h.get("titulo", "").lower()) for h in self.historico}
+        for c in ins.get("cards") or []:
+            if (c["tipo"], c["titulo"].lower()) in vistos:
+                continue
+            self.historico.append({"id": next(self._ids), "t": t, **c})
 
     def adicionar_linha(self, texto: str) -> None:
         with self._trava:
@@ -165,6 +208,7 @@ class Sala:
         with self._trava:
             self.linhas.clear()
             self.insights, self.insights_em = None, None
+            self.historico.clear()
             self.versao += 1
         self.publicar()
 

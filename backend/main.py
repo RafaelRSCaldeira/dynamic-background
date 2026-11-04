@@ -18,12 +18,13 @@ from contextlib import asynccontextmanager
 import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import dados, ia, modelos, privacidade, visao
 from .config import CONFIG, FRONTEND
 from .hub import Hub
+from .retorno import listar_microfones, retorno
 from .sala import Sala
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(name)-11s %(message)s", datefmt="%H:%M:%S")
@@ -39,7 +40,7 @@ LOCAIS = {"127.0.0.1", "::1", "localhost"}
 
 @asynccontextmanager
 async def ciclo(app: FastAPI):
-    hub.loop = asyncio.get_running_loop()
+    hub.loop = retorno.loop = asyncio.get_running_loop()
     app.state.http = httpx.AsyncClient(timeout=15, headers={"User-Agent": "PainelAmbiente/1.0"})
     tarefas: list[asyncio.Task] = []
     if CONFIG["audio"]["ativado"]:
@@ -122,6 +123,7 @@ async def api_modelos(request: Request):
         "whisper_atual": sala.whisper_atual,
         "whisper_dispositivo": sala.whisper_dispositivo,
         "audio": CONFIG["audio"]["ativado"],
+        "microfones": await asyncio.to_thread(listar_microfones),
     }
 
 
@@ -139,14 +141,57 @@ async def ws(websocket: WebSocket):
                 sala.definir_mute(msg.get("valor"))
             elif acao == "esquecer":
                 sala.esquecer()
+                retorno.limpar()
             elif acao == "modelo_ia" and local:
                 sala.definir_modelo_ia(str(msg.get("nome") or ""))
             elif acao == "modelo_whisper" and local:
                 sala.definir_modelo_whisper(str(msg.get("nome") or ""))
+            elif acao == "microfone" and local:
+                sala.definir_microfone(str(msg.get("nome") or ""))
     except (WebSocketDisconnect, RuntimeError, ValueError):
         pass
     finally:
         hub.remover(websocket)
+
+
+@app.websocket("/ws/retorno")
+async def ws_retorno(websocket: WebSocket):
+    """Retorno do microfone para os Ajustes: só a própria máquina, e só enquanto está aberto."""
+    if (websocket.client.host if websocket.client else "") not in LOCAIS:
+        await websocket.close(code=1008)
+        return
+    await websocket.accept()
+    ouvinte = retorno.entrar()
+
+    async def enviar():
+        while True:
+            m = await ouvinte.fila.get()
+            if isinstance(m, bytes):
+                await websocket.send_bytes(m)
+            else:
+                await websocket.send_json(m)
+
+    envio = asyncio.create_task(enviar())
+    try:
+        while True:
+            msg = await websocket.receive_json()
+            if msg.get("acao") == "ao_vivo":
+                ouvinte.ao_vivo = bool(msg.get("valor"))
+    except (WebSocketDisconnect, RuntimeError, ValueError):
+        pass
+    finally:
+        envio.cancel()
+        retorno.sair(ouvinte)
+
+
+@app.get("/api/retorno/{ident}.wav")
+async def api_retorno_wav(ident: int, request: Request):
+    if (request.client.host if request.client else "") not in LOCAIS:
+        raise HTTPException(403, "Disponível só no computador do painel")
+    dados = retorno.obter_wav(ident)
+    if dados is None:
+        raise HTTPException(404, "Essa frase já foi apagada")
+    return Response(dados, media_type="audio/wav", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/visao/{caminho:path}")

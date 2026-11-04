@@ -21,6 +21,7 @@ from collections import deque
 import numpy as np
 
 from . import modelos
+from .retorno import retorno
 from .sala import Sala
 
 log = logging.getLogger("audio")
@@ -108,7 +109,12 @@ class ServicoAudio:
         self.taxa_mic = TAXA
         self._troca: str | None = None
         self._baixando = ""
+        self._reabrir = False
         sala.ao_trocar_whisper = self.trocar_modelo
+        sala.ao_trocar_microfone = self._pedir_reabrir
+
+    def _pedir_reabrir(self) -> None:
+        self._reabrir = True  # a captura fecha e abre o microfone escolhido
 
     def iniciar(self) -> None:
         threading.Thread(target=self._loop_transcricao, name="whisper", daemon=True).start()
@@ -260,8 +266,13 @@ class ServicoAudio:
                 continue
             if self.sala.mutado:
                 continue
-            audio = _normalizar(_reamostrar(audio, self.taxa_mic, TAXA))
+            audio16 = _reamostrar(audio, self.taxa_mic, TAXA)
+            pico = float(np.max(np.abs(audio16))) if len(audio16) else 0.0
+            audio = _normalizar(audio16)
+            ganho = float(np.max(np.abs(audio))) / pico if pico > 1e-4 else 1.0
             gpu = self.dispositivo == "cuda"
+            descartes: list[str] = []
+            inicio = time.monotonic()
             try:
                 partes, _ = self.modelo.transcribe(
                     audio,
@@ -277,39 +288,55 @@ class ServicoAudio:
                 for p in partes:
                     # descarta só o que é claramente ruído/alucinação
                     if (p.no_speech_prob > 0.6 and p.avg_logprob < -0.8) or p.avg_logprob < -1.4:
+                        descartes.append(f"{p.text.strip()} (incerto)")
                         continue
                     if p.compression_ratio > 2.4:  # repetição em loop
+                        descartes.append(f"{p.text.strip()} (repetição)")
                         continue
                     trechos.append(p.text.strip())
                 texto = " ".join(trechos).strip()
             except Exception as e:  # noqa: BLE001
                 log.warning("Erro na transcrição: %s", e)
                 continue
-            if not texto or _eh_alucinacao(texto):
-                continue
+            alucinacao = bool(texto) and _eh_alucinacao(texto)
             if self.sala.mutado:  # mutaram enquanto transcrevia → descarta
+                continue
+            if retorno.ativo:  # Ajustes aberto: deixa ouvir exatamente o que o Whisper recebeu
+                retorno.frase({
+                    "texto": "" if alucinacao else texto,
+                    "descartes": descartes + ([f"{texto} (frase típica de silêncio)"] if alucinacao else []),
+                    "duracao": round(len(audio) / TAXA, 1),
+                    "pico_db": round(20 * math.log10(max(pico, 1e-6)), 1),
+                    "ganho": round(ganho, 1),
+                    "ms": round((time.monotonic() - inicio) * 1000),
+                    "modelo": self.nome,
+                }, audio, TAXA)
+            if not texto or alucinacao:
                 continue
             log.info("🗣  %s", texto)
             self.sala.adicionar_linha(texto)
 
     # ── Microfone ───────────────────────────────────────────
-    def _escolher_dispositivo(self):
+    def _candidatos(self) -> list[int | None]:
+        """Ordem de tentativa. O WASAPI vem primeiro: entrega o áudio na taxa nativa do microfone
+        (o MME converte para 44,1 kHz) e já com o processamento de voz do Windows/driver."""
         import sounddevice as sd
 
-        nome = (self.cfg.get("microfone") or "").strip().lower()
-        if not nome:
-            return None, sd.query_devices(kind="input")
-        for i, d in enumerate(sd.query_devices()):
-            if d["max_input_channels"] > 0 and nome in d["name"].lower():
-                return i, d
-        raise RuntimeError(f'Microfone "{self.cfg["microfone"]}" não encontrado')
+        apis = sd.query_hostapis()
+        wasapi = next((i for i, a in enumerate(apis) if "WASAPI" in a["name"]), None)
+        devs = sd.query_devices()
+        nome = (self.sala.microfone or "").strip().lower()
+        if nome:
+            achados = [i for i, d in enumerate(devs) if d["max_input_channels"] > 0 and nome in d["name"].lower()]
+            achados.sort(key=lambda i: devs[i]["hostapi"] != wasapi)
+            if achados:
+                return achados
+            log.warning('Microfone "%s" não encontrado; usando o padrão do Windows', self.sala.microfone)
+        padrao = apis[wasapi]["default_input_device"] if wasapi is not None else -1
+        return ([padrao] if padrao is not None and padrao >= 0 else []) + [None]
 
     def _abrir_stream(self):
         import sounddevice as sd
-
-        indice, info = self._escolher_dispositivo()
-        taxa = int(info["default_samplerate"]) or 48000
-        tamanho = int(taxa * BLOCO_MS / 1000)
 
         def callback(indata, frames, tempo, status):  # thread do PortAudio
             try:
@@ -317,13 +344,26 @@ class ServicoAudio:
             except queue.Full:
                 pass
 
-        stream = sd.InputStream(
-            device=indice, channels=1, samplerate=taxa, blocksize=tamanho, dtype="float32", callback=callback
-        )
-        stream.start()
-        self.taxa_mic = taxa  # os segmentos são reamostrados para 16 kHz inteiros, antes do Whisper
-        log.info("Microfone aberto: %s (%d Hz)", info["name"], taxa)
-        return stream
+        erros = []
+        for indice in self._candidatos():
+            info = sd.query_devices(indice, kind="input") if indice is None else sd.query_devices(indice)
+            taxa = int(info["default_samplerate"]) or 48000
+            try:
+                stream = sd.InputStream(
+                    device=indice, channels=1, samplerate=taxa, blocksize=int(taxa * BLOCO_MS / 1000),
+                    dtype="float32", callback=callback,
+                )
+                stream.start()
+            except Exception as e:  # noqa: BLE001
+                erros.append(f"{info['name']}: {e}")
+                continue
+            self.taxa_mic = taxa  # os segmentos são reamostrados para 16 kHz inteiros, antes do Whisper
+            api = sd.query_hostapis(info["hostapi"])["name"]
+            log.info("Microfone aberto: %s (%d Hz, %s)", info["name"], taxa, api)
+            self.sala.definir_microfone_atual(info["name"], taxa)
+            retorno.definir_info(info["name"], taxa, api)
+            return stream
+        raise RuntimeError("; ".join(erros) or "nenhum microfone")
 
     def _limpar_fila(self) -> None:
         while True:
@@ -344,6 +384,18 @@ class ServicoAudio:
         ultimo_nivel = 0.0
 
         while not self.parar.is_set():
+            # ── troca de microfone pedida na tela ──
+            if self._reabrir:
+                self._reabrir = False
+                if stream is not None:
+                    stream.stop()
+                    stream.close()
+                    stream = None
+                    self._limpar_fila()
+                    segmento, falando = [], False
+                    pre_fala.clear()
+                    historico_rms.clear()
+
             # ── mute: fecha o microfone de verdade ──
             if self.sala.mutado:
                 if stream is not None:
@@ -354,6 +406,7 @@ class ServicoAudio:
                     segmento, falando = [], False
                     pre_fala.clear()
                     hub.enviar_threadsafe({"tipo": "nivel", "v": 0})
+                    retorno.limpar()
                     log.info("Microfone fechado (mute)")
                 time.sleep(0.15)
                 continue
@@ -373,6 +426,7 @@ class ServicoAudio:
             except queue.Empty:
                 continue
 
+            retorno.audio(bloco)
             rms = float(np.sqrt(np.mean(bloco * bloco)) + 1e-9)
 
             # ruído de fundo = percentil 20 dos últimos 10 s (se adapta a ventilador, ar-condicionado...)

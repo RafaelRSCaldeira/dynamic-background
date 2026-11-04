@@ -16,7 +16,7 @@ PADRAO: dict = {
         "feeds": [{"nome": "g1", "url": "https://g1.globo.com/rss/g1/"}],
     },
     "tela": {"fps_max": 60, "qualidade_fundo": 0.5},
-    "camera": {"ativada": True, "ociosidade_minutos": 5},
+    "camera": {"ativada": True, "ociosidade_minutos": 5, "distancia_gestos": 2.0, "campo_visao": 65},
     "audio": {
         "ativado": True,
         "iniciar_mutado": False,

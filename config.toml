@@ -41,6 +41,11 @@ qualidade_fundo = 0.5
 ativada = true
 # Sem ninguém se mexendo por este tempo, o painel entra em modo ambiente (mais discreto).
 ociosidade_minutos = 5
+# Gestos só valem para quem está a até esta distância da câmera (metros). Quem passa ao fundo é ignorado.
+distancia_gestos = 2.0
+# Ângulo de visão horizontal da webcam, em graus (usado para estimar a distância). Notebooks: ~60–70.
+# Se a distância mostrada em Ajustes não bater com a real, ajuste aqui.
+campo_visao = 65
 
 [audio]
 ativado = true
