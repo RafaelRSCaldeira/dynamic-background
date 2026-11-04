@@ -54,9 +54,14 @@ def _registrar_dlls_cuda() -> None:
             os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
 
 
+# Frases curtas que o Whisper "ouve" no silêncio. Só são descartadas quando são o texto INTEIRO
+# (um "obrigado" no meio de uma frase de verdade continua valendo).
+SOZINHAS = {"obrigado", "obrigada", "obrigado a todos", "tchau", "e aí", "legenda", "música", "aplausos", "risos", "hum", "ah"}
+
+
 def _eh_alucinacao(texto: str) -> bool:
     t = texto.lower().strip(" .!?…")
-    if len(t) < 2:
+    if len(t) < 2 or t in SOZINHAS:
         return True
     return any(a in t for a in ALUCINACOES)
 
