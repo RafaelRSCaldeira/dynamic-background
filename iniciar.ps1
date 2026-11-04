@@ -57,6 +57,14 @@ function Instalar-Dependencias {
         Write-Host "Placa NVIDIA detectada: instalando bibliotecas CUDA para o Whisper..." -ForegroundColor Cyan
         & $venvPy -m pip install --disable-pip-version-check -r requirements-gpu.txt
         if ($LASTEXITCODE -ne 0) { Write-Host "Aviso: sem as libs CUDA o Whisper vai rodar na CPU." -ForegroundColor Yellow }
+        # placa com 12 GB ou mais: o Zak também gera imagens localmente (PyTorch com CUDA + diffusers, ~4 GB)
+        $vram = (& nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>$null | Measure-Object -Maximum).Maximum
+        if ($vram -ge 12000) {
+            Write-Host "GPU com $([math]::Round($vram / 1024)) GB: instalando a geracao de imagens do Zak..." -ForegroundColor Cyan
+            & $venvPy -m pip install --disable-pip-version-check torch --index-url https://download.pytorch.org/whl/cu130
+            & $venvPy -m pip install --disable-pip-version-check -r requirements-imagem.txt
+            if ($LASTEXITCODE -ne 0) { Write-Host "Aviso: sem a geracao de imagens, as cenas abstratas ficam so com o fundo animado." -ForegroundColor Yellow }
+        }
     }
 }
 

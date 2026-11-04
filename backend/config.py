@@ -29,6 +29,15 @@ PADRAO: dict = {
         "mute_automatico": True,
         "sensibilidade": 1.0,
     },
+    "zak": {
+        "ativado": False,
+        "protecao": True,          # proteção de informação (também liga/desliga em Ajustes)
+        "ambiente_segundos": 20,   # a cada quanto tempo o modo ambiente olha a conversa
+        "voz_motor": "kokoro",     # kokoro | nenhum
+        "voz": "pm_alex",          # voz masculina pt-BR do Kokoro
+        "voz_velocidade": 1.0,
+        "imagem_modelo": "auto",   # auto | nenhum | id de um modelo do Hugging Face (diffusers)
+    },
     "ia": {
         "ollama_url": "http://localhost:11434",
         "modelo": "gemma3:4b",

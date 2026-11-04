@@ -69,9 +69,27 @@ mute_automatico = true
 # Aumente (ex.: 1.5) se ele não estiver captando falas mais baixas; diminua se captar ruído.
 sensibilidade = 1.0
 
+[zak]
+# Zak: a tela vira a cena do assunto da conversa (em vez dos cards) e atende "Ei, Zak".
+# true = o Zak é a tela padrão. Para experimentar sem mudar aqui: http://localhost:8765/?zak  (demonstração: /?zak&demo)
+ativado = false
+# Proteção de informação: a tela mostra só o tema, sem falas, nomes ou números, e nada de assuntos
+# pessoais/delicados. Também liga e desliga em Ajustes (o que for escolhido lá vale mais).
+protecao = true
+# A cada quantos segundos o modo ambiente olha a conversa recente.
+ambiente_segundos = 20
+# Voz: "kokoro" (local, na CPU; baixa ~340 MB na primeira vez) ou "nenhum" (só legenda).
+voz_motor = "kokoro"
+# Vozes masculinas pt-BR do Kokoro: pm_alex (padrão), pm_santa.
+voz = "pm_alex"
+voz_velocidade = 1.0
+# Imagens geradas localmente para ideias e atmosferas: "auto" (Z-Image-Turbo com GPU de 12 GB ou mais),
+# "nenhum", ou o id de outro modelo do Hugging Face (ex.: "black-forest-labs/FLUX.1-schnell").
+imagem_modelo = "auto"
+
 [ia]
 ollama_url = "http://localhost:11434"
 # Modelo inicial. Qualquer modelo instalado no Ollama pode ser escolhido na tela (botão Ajustes).
-modelo = "gemma3:4b"
+modelo = "qwen3:8b"
 intervalo_segundos = 40
 janela_minutos = 6

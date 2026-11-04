@@ -102,7 +102,8 @@ class ServicoAudio:
         self.sala = sala
         self.cfg = cfg
         self.blocos: queue.Queue[np.ndarray] = queue.Queue(maxsize=300)
-        self.segmentos: queue.Queue[np.ndarray] = queue.Queue(maxsize=6)
+        # (áudio, início, fim) — os horários servem para o Zak saber se a frase foi dita enquanto ele falava (eco)
+        self.segmentos: queue.Queue[tuple[np.ndarray, float, float]] = queue.Queue(maxsize=6)
         self.parar = threading.Event()
         self.modelo = None
         self.nome = ""
@@ -264,7 +265,7 @@ class ServicoAudio:
                 time.sleep(0.5)
                 continue
             try:
-                audio = self.segmentos.get(timeout=0.5)
+                audio, t_inicio, t_fim = self.segmentos.get(timeout=0.5)
             except queue.Empty:
                 continue
             if self.sala.mutado:
@@ -286,6 +287,7 @@ class ServicoAudio:
                     vad_parameters={"threshold": 0.4, "min_silence_duration_ms": 600, "speech_pad_ms": 400},
                     condition_on_previous_text=False,
                     initial_prompt=self._contexto(),
+                    hotwords="Ei, Zak",          # ajuda o Whisper a escrever o nome do assistente certo
                     hallucination_silence_threshold=2.0,
                 )
                 trechos = []
@@ -318,6 +320,9 @@ class ServicoAudio:
             if not texto or alucinacao:
                 continue
             log.info("🗣  %s", texto)
+            # falas para o Zak ("Ei, Zak, ...") e o eco da própria voz dele não entram na conversa da sala
+            if self.sala.ao_ouvir and self.sala.ao_ouvir(texto, t_inicio, t_fim):
+                continue
             self.sala.adicionar_linha(texto)
 
     # ── Microfone ───────────────────────────────────────────
@@ -459,7 +464,8 @@ class ServicoAudio:
             if silencio_ms >= SILENCIO_FIM_MS or duracao >= SEGMENTO_MAX_MS:
                 if duracao - silencio_ms >= FALA_MIN_MS:
                     try:
-                        self.segmentos.put_nowait(np.concatenate(segmento))
+                        fim = time.time() - silencio_ms / 1000
+                        self.segmentos.put_nowait((np.concatenate(segmento), fim - (duracao - silencio_ms) / 1000, fim))
                     except queue.Full:
                         log.warning("Transcrição atrasada; segmento descartado")
                 falando, segmento = False, []

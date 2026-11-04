@@ -113,6 +113,9 @@ async def executar(sala: Sala, cfg: dict) -> None:
                 ultima_versao, ultimo_modelo = -1, modelo  # modelo novo: refaz os destaques
 
             versao, texto = sala.texto_recente(janela)
+            if not sala.insights_necessarios():   # só telas do Zak abertas: a GPU fica para ele
+                await esperar(intervalo)
+                continue
             if versao != ultima_versao and len(texto.split()) >= 12:
                 sala.definir_ia("pensando")
                 try:

@@ -13,3 +13,7 @@ ctranslate2>=4.4,<5
 # filtro de voz (Silero VAD) do faster-whisper; não instale onnxruntime-gpu junto
 onnxruntime>=1.17,<2
 av>=11
+# fotos das cenas do Zak (filtro de qualidade e paleta)
+pillow>=11
+# voz do Zak (Kokoro em ONNX; roda na CPU)
+kokoro-onnx>=0.4

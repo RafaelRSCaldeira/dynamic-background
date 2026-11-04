@@ -37,6 +37,8 @@ class Sala:
         self.microfone_atual = ""      # nome do dispositivo aberto agora
         self.microfone_taxa = 0
         self.ao_trocar_microfone = None
+        self.ao_ouvir = None               # Zak: decide se a frase é para ele (devolve True)
+        self.insights_necessarios = lambda: True   # sem telas clássicas abertas, os cards da Sala não são gerados
         self._trava = threading.RLock()
 
         self.mutado_manual = bool(cfg_audio["iniciar_mutado"])

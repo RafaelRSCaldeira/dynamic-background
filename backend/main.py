@@ -21,11 +21,12 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import dados, ia, modelos, privacidade, visao
+from . import dados, ia, imagens, modelos, privacidade, visao
 from .config import CONFIG, FRONTEND
 from .hub import Hub
 from .retorno import listar_microfones, retorno
 from .sala import Sala
+from .zak import Zak
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(name)-11s %(message)s", datefmt="%H:%M:%S")
 for ruidoso in ("httpx", "httpx2", "httpcore", "faster_whisper"):
@@ -35,6 +36,11 @@ log = logging.getLogger("painel")
 
 hub = Hub()
 sala = Sala(hub, CONFIG["audio"], CONFIG["ia"])
+zak = Zak(sala, CONFIG["zak"], CONFIG["ia"], CONFIG["local"])
+sala.ao_ouvir = zak.ouvir
+telas_zak: set = set()
+# os cards da Sala só são gerados se alguma tela clássica (sem ?zak) estiver aberta
+sala.insights_necessarios = lambda: any(local and ws not in telas_zak for ws, local in list(hub.clientes.items()))
 LOCAIS = {"127.0.0.1", "::1", "localhost"}
 
 
@@ -50,11 +56,13 @@ async def ciclo(app: FastAPI):
         tarefas.append(asyncio.create_task(ia.executar(sala, CONFIG["ia"])))
         if CONFIG["audio"]["mute_automatico"]:
             tarefas.append(asyncio.create_task(privacidade.vigiar(sala)))
+    tarefas.append(asyncio.create_task(zak.executar(app.state.http)))
     porta = CONFIG["servidor"]["porta"]
     log.info("Painel em http://localhost:%s  |  controle remoto em /remote", porta)
     yield
     for t in tarefas:
         t.cancel()
+    zak.gerador.fechar()
     await app.state.http.aclose()
 
 
@@ -83,6 +91,7 @@ async def api_config():
         "tela": CONFIG["tela"],
         "camera": CONFIG["camera"],
         "audio": CONFIG["audio"]["ativado"],
+        "zak": CONFIG["zak"],
     }
 
 
@@ -110,6 +119,39 @@ async def api_noticias():
     return await _proteger(dados.noticias(app.state.http, CONFIG["widgets"]["feeds"]))
 
 
+@app.get("/api/imagem")
+async def api_imagem(q: str):
+    """Melhor foto (4K, filtrada) para o assunto de uma cena do Zak, com paleta e crédito."""
+    meta = await _proteger(imagens.buscar(app.state.http, q))
+    if not meta:
+        raise HTTPException(404, "Nenhuma imagem boa o bastante")
+    return meta
+
+
+@app.get("/api/imagem/gerar")
+async def api_imagem_gerar(p: str):
+    """Imagem gerada localmente (ideias e atmosferas sem foto real). Pode levar alguns segundos."""
+    if not zak.gerador.disponivel:
+        raise HTTPException(404, f"Geração de imagens indisponível: {zak.gerador.detalhe}")
+    try:
+        meta = await zak.gerador.gerar(p)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Falha ao gerar: {e}") from e
+    finally:
+        zak.publicar()
+    if not meta:
+        raise HTTPException(404, "Não foi possível gerar a imagem")
+    return meta
+
+
+@app.get("/api/imagem/arquivo/{nome}")
+async def api_imagem_arquivo(nome: str):
+    caminho = imagens.arquivo(nome)
+    if not caminho:
+        raise HTTPException(404)
+    return FileResponse(caminho, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=604800, immutable"})
+
+
 @app.get("/api/modelos")
 async def api_modelos(request: Request):
     # só a própria máquina vê e troca os modelos (o celular em /remote só muta)
@@ -134,6 +176,8 @@ async def ws(websocket: WebSocket):
     hub.adicionar(websocket, local)
     try:
         await websocket.send_json(sala.snapshot(completo=local))
+        if local:
+            await websocket.send_json(zak.snapshot())
         while True:
             msg = await websocket.receive_json()
             acao = msg.get("acao")
@@ -142,6 +186,8 @@ async def ws(websocket: WebSocket):
             elif acao == "esquecer":
                 sala.esquecer()
                 retorno.limpar()
+                if zak.cena_origem == "ambiente":   # a cena veio da conversa que acabou de ser apagada
+                    zak.limpar_tela()
             elif acao == "modelo_ia" and local:
                 sala.definir_modelo_ia(str(msg.get("nome") or ""))
             elif acao == "modelo_whisper" and local:
@@ -152,10 +198,34 @@ async def ws(websocket: WebSocket):
                 sala.definir_idioma(str(msg.get("valor") or ""))
             elif acao == "ganho_mic" and local:
                 sala.definir_ganho(msg.get("db") or 0)
+            # ── Zak (só a própria tela) ──
+            elif acao == "zak_tela" and local:
+                telas_zak.add(websocket)
+                zak.tela_entrou(id(websocket))
+            elif acao == "zak_pedido" and local:
+                texto = str(msg.get("texto") or "")[:300]
+                asyncio.create_task(zak.pedido(texto))
+            elif acao == "zak_tocando" and local:
+                zak.tocando(bool(msg.get("valor")))
+            elif acao == "zak_protecao" and local:
+                zak.definir_protecao(bool(msg.get("valor")))
+            elif acao == "zak_limpar" and local:
+                zak.limpar_tela()
+            elif acao == "zak_calar" and local:
+                zak.calar()
+            elif acao == "zak_musica_parar" and local:
+                zak.musica = None
+                zak.publicar()
+            elif acao == "zak_timer_cancelar" and local:
+                zak.timers = [t for t in zak.timers if t["id"] != msg.get("id")]
+                zak.publicar()
     except (WebSocketDisconnect, RuntimeError, ValueError):
         pass
     finally:
         hub.remover(websocket)
+        if websocket in telas_zak:
+            telas_zak.discard(websocket)
+            zak.tela_saiu(id(websocket))
 
 
 @app.websocket("/ws/retorno")
@@ -196,6 +266,16 @@ async def api_retorno_wav(ident: int, request: Request):
     if dados is None:
         raise HTTPException(404, "Essa frase já foi apagada")
     return Response(dados, media_type="audio/wav", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/zak/audio/{chave}.wav")
+async def api_zak_audio(chave: str, request: Request):
+    if (request.client.host if request.client else "") not in LOCAIS:
+        raise HTTPException(403, "Disponível só no computador do painel")
+    dados_wav = zak.audio(chave)
+    if dados_wav is None:
+        raise HTTPException(404)
+    return Response(dados_wav, media_type="audio/wav", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/visao/{caminho:path}")

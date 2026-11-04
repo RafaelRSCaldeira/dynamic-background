@@ -1,0 +1,13 @@
+# Opcional: geração local de imagens para as cenas do Zak (ideias e atmosferas sem foto real).
+# Precisa de GPU NVIDIA (≥ 12 GB de VRAM para o modelo padrão, Z-Image-Turbo). Instale em dois passos:
+#   1) PyTorch com CUDA (o do PyPI no Windows é só CPU):
+#      .venv\Scripts\python -m pip install torch --index-url https://download.pytorch.org/whl/cu130
+#   2) O resto:
+#      .venv\Scripts\python -m pip install -r requirements-imagem.txt
+# cu130 = CUDA 13 (driver NVIDIA 580 ou mais novo; RTX 20xx a 50xx, inclusive a 5090).
+# Testado: torch 2.14.1+cu130 · diffusers 0.42.1 · transformers 5.22.1
+diffusers>=0.36
+transformers>=4.51
+accelerate>=1.0
+safetensors>=0.4
+sentencepiece>=0.2
