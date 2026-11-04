@@ -72,7 +72,7 @@ sensibilidade = 1.0
 [zak]
 # Zak: a tela vira a cena do assunto da conversa (em vez dos cards) e atende "Ei, Zak".
 # true = o Zak é a tela padrão. Para experimentar sem mudar aqui: http://localhost:8765/?zak  (demonstração: /?zak&demo)
-ativado = false
+ativado = true
 # Proteção de informação: a tela mostra só o tema, sem falas, nomes ou números, e nada de assuntos
 # pessoais/delicados. Também liga e desliga em Ajustes (o que for escolhido lá vale mais).
 protecao = true

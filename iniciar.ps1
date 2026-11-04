@@ -116,7 +116,19 @@ function Servidor-Responde {
 
 $servidor = $null
 if (Servidor-Responde) {
-    Write-Host "O servidor ja esta rodando em $url." -ForegroundColor Cyan
+    # Um servidor que ficou aberto de antes roda o codigo e o config.toml antigos: reinicia para pegar as mudancas.
+    $donos = Get-NetTCPConnection -LocalPort $porta -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique
+    foreach ($id in $donos) {
+        $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $id" -ErrorAction SilentlyContinue
+        if ($proc -and $proc.CommandLine -match "backend\.main") {
+            Write-Host "Reiniciando o servidor que ja estava rodando (para usar a versao atual)..." -ForegroundColor Yellow
+            Stop-Process -Id $id -Force -ErrorAction SilentlyContinue
+        }
+    }
+    for ($i = 0; $i -lt 20 -and (Servidor-Responde); $i++) { Start-Sleep -Milliseconds 250 }
+}
+if (Servidor-Responde) {
+    Write-Host "O servidor ja esta rodando em $url (outro programa; nao foi reiniciado)." -ForegroundColor Cyan
 }
 else {
     Write-Host "Iniciando servidor em $url ..." -ForegroundColor Cyan
