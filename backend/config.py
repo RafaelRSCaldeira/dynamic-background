@@ -24,6 +24,7 @@ PADRAO: dict = {
         "modelo_whisper": "auto",
         "dispositivo_whisper": "auto",
         "idioma": "pt",
+        "ganho_db": 0.0,
         "retencao_minutos": 10,
         "mute_automatico": True,
         "sensibilidade": 1.0,

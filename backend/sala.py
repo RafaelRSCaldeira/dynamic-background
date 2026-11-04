@@ -11,6 +11,10 @@ from . import modelos
 from .hub import Hub
 
 
+IDIOMAS = {"pt", "en", "auto"}
+GANHO_MIN, GANHO_MAX = -12.0, 24.0
+
+
 class Sala:
     def __init__(self, hub: Hub, cfg_audio: dict, cfg_ia: dict) -> None:
         self.hub = hub
@@ -27,6 +31,9 @@ class Sala:
         self.acordar_ia: asyncio.Event | None = None  # criado pelo laço da IA
         self.ao_trocar_whisper = None  # callback do serviço de áudio
         self.microfone: str = prefs.get("microfone", cfg_audio.get("microfone") or "")  # "" = padrão do Windows
+        self.idioma: str = prefs.get("idioma") or cfg_audio.get("idioma") or "pt"      # pt | en | auto
+        self.idioma_desde = time.time()
+        self.ganho_db: float = float(prefs.get("ganho_db", cfg_audio.get("ganho_db", 0)) or 0)
         self.microfone_atual = ""      # nome do dispositivo aberto agora
         self.microfone_taxa = 0
         self.ao_trocar_microfone = None
@@ -90,6 +97,8 @@ class Sala:
                     whisper_aviso=self.whisper_aviso,
                     whisper_dispositivo=self.whisper_dispositivo,
                     microfone=self.microfone,
+                    idioma=self.idioma,
+                    ganho_db=self.ganho_db,
                     microfone_atual=self.microfone_atual,
                     microfone_taxa=self.microfone_taxa,
                     linhas=list(self.linhas)[-6:],
@@ -160,6 +169,23 @@ class Sala:
         self.publicar()
         if self.ao_trocar_microfone:
             self.ao_trocar_microfone()
+
+    def definir_idioma(self, idioma: str) -> None:
+        if idioma not in IDIOMAS or idioma == self.idioma:
+            return
+        with self._trava:
+            self.idioma, self.idioma_desde = idioma, time.time()
+        modelos.gravar(idioma=idioma)
+        self.publicar()
+
+    def definir_ganho(self, db: float) -> None:
+        db = round(max(GANHO_MIN, min(GANHO_MAX, float(db))), 1)
+        if db == self.ganho_db:
+            return
+        with self._trava:
+            self.ganho_db = db
+        modelos.gravar(ganho_db=db)
+        self.publicar()
 
     def definir_microfone_atual(self, nome: str, taxa: int) -> None:
         with self._trava:

@@ -57,7 +57,8 @@ def _registrar_dlls_cuda() -> None:
 
 # Frases curtas que o Whisper "ouve" no silêncio. Só são descartadas quando são o texto INTEIRO
 # (um "obrigado" no meio de uma frase de verdade continua valendo).
-SOZINHAS = {"obrigado", "obrigada", "obrigado a todos", "tchau", "e aí", "legenda", "música", "aplausos", "risos", "hum", "ah"}
+SOZINHAS = {"obrigado", "obrigada", "obrigado a todos", "tchau", "e aí", "legenda", "música", "aplausos", "risos", "hum", "ah",
+            "thank you", "thanks", "thank you very much", "bye", "you", "okay", "music", "applause", "laughter"}
 
 
 def _eh_alucinacao(texto: str) -> bool:
@@ -215,8 +216,10 @@ class ServicoAudio:
         raise RuntimeError("; ".join(erros))
 
     def _contexto(self) -> str | None:
-        """Últimas falas como 'prompt': ajuda o Whisper com nomes, assunto e pontuação."""
-        _, texto = self.sala.texto_recente(2)
+        """Últimas falas como 'prompt': ajuda o Whisper com nomes, assunto e pontuação.
+        Só as que vieram depois da última troca de idioma (texto em outra língua confundiria)."""
+        minutos = min(2.0, (time.time() - self.sala.idioma_desde) / 60)
+        _, texto = self.sala.texto_recente(minutos)
         texto = " ".join(texto.split())
         return texto[-220:] if texto else None
 
@@ -274,9 +277,10 @@ class ServicoAudio:
             descartes: list[str] = []
             inicio = time.monotonic()
             try:
+                idioma = self.sala.idioma
                 partes, _ = self.modelo.transcribe(
                     audio,
-                    language=self.cfg["idioma"],
+                    language=None if idioma == "auto" else idioma,
                     beam_size=5 if gpu else 3,
                     vad_filter=True,
                     vad_parameters={"threshold": 0.4, "min_silence_duration_ms": 600, "speech_pad_ms": 400},
@@ -426,6 +430,9 @@ class ServicoAudio:
             except queue.Empty:
                 continue
 
+            # ganho escolhido na tela (o retorno e o medidor já ouvem o som com o ganho aplicado)
+            if self.sala.ganho_db:
+                bloco = np.clip(bloco * (10 ** (self.sala.ganho_db / 20)), -1.0, 1.0)
             retorno.audio(bloco)
             rms = float(np.sqrt(np.mean(bloco * bloco)) + 1e-9)
 

@@ -148,6 +148,10 @@ async def ws(websocket: WebSocket):
                 sala.definir_modelo_whisper(str(msg.get("nome") or ""))
             elif acao == "microfone" and local:
                 sala.definir_microfone(str(msg.get("nome") or ""))
+            elif acao == "idioma" and local:
+                sala.definir_idioma(str(msg.get("valor") or ""))
+            elif acao == "ganho_mic" and local:
+                sala.definir_ganho(msg.get("db") or 0)
     except (WebSocketDisconnect, RuntimeError, ValueError):
         pass
     finally:

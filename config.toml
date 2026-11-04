@@ -57,7 +57,11 @@ microfone = ""
 modelo_whisper = "auto"
 # auto | cuda | cpu
 dispositivo_whisper = "auto"
+# Idioma falado na sala: "pt" (português do Brasil), "en" (inglês) ou "auto" (o Whisper detecta).
+# Também dá para trocar na tela (Ajustes → Transcrição da fala).
 idioma = "pt"
+# Ganho do microfone em dB (-12 a +24). Aumente se o microfone capta baixo. Também ajustável em Ajustes.
+ganho_db = 0
 # A transcrição fica só na memória e é descartada depois deste tempo.
 retencao_minutos = 10
 # Muta sozinho quando outro app (Teams, Zoom, Meet no navegador...) estiver usando o microfone.
