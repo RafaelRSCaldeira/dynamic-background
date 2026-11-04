@@ -12,6 +12,7 @@ from .hub import Hub
 
 
 IDIOMAS = {"pt", "en", "auto"}
+ISOLAMENTOS = ("volume", "voz", "voz_ruido")
 GANHO_MIN, GANHO_MAX = -12.0, 24.0
 
 
@@ -34,6 +35,9 @@ class Sala:
         self.idioma: str = prefs.get("idioma") or cfg_audio.get("idioma") or "pt"      # pt | en | auto
         self.idioma_desde = time.time()
         self.ganho_db: float = float(prefs.get("ganho_db", cfg_audio.get("ganho_db", 0)) or 0)
+        isolamento = prefs.get("isolamento") or cfg_audio.get("isolamento") or "voz"
+        self.isolamento: str = isolamento if isolamento in ISOLAMENTOS else "voz"
+        self.isolamento_detalhe = ""   # estado do removedor de ruído (baixando, erro...)
         self.microfone_atual = ""      # nome do dispositivo aberto agora
         self.microfone_taxa = 0
         self.ao_trocar_microfone = None
@@ -101,6 +105,8 @@ class Sala:
                     microfone=self.microfone,
                     idioma=self.idioma,
                     ganho_db=self.ganho_db,
+                    isolamento=self.isolamento,
+                    isolamento_detalhe=self.isolamento_detalhe,
                     microfone_atual=self.microfone_atual,
                     microfone_taxa=self.microfone_taxa,
                     linhas=list(self.linhas)[-6:],
@@ -180,6 +186,19 @@ class Sala:
         modelos.gravar(idioma=idioma)
         self.publicar()
 
+    def definir_isolamento(self, modo: str) -> None:
+        if modo not in ISOLAMENTOS or modo == self.isolamento:
+            return
+        with self._trava:
+            self.isolamento = modo
+        modelos.gravar(isolamento=modo)
+        self.publicar()
+
+    def definir_isolamento_detalhe(self, detalhe: str) -> None:
+        if detalhe != self.isolamento_detalhe:
+            self.isolamento_detalhe = detalhe
+            self.publicar()
+
     def definir_ganho(self, db: float) -> None:
         db = round(max(GANHO_MIN, min(GANHO_MAX, float(db))), 1)
         if db == self.ganho_db:
@@ -245,6 +264,11 @@ class Sala:
         with self._trava:
             while self.linhas and self.linhas[0]["t"] < limite:
                 self.linhas.popleft()
+
+    def linhas_recentes(self, minutos: float) -> tuple[int, list[tuple[float, str]]]:
+        limite = time.time() - minutos * 60
+        with self._trava:
+            return self.versao, [(l["t"], l["texto"]) for l in self.linhas if l["t"] >= limite]
 
     def texto_recente(self, minutos: float) -> tuple[int, str]:
         limite = time.time() - minutos * 60

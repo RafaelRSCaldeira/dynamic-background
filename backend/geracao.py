@@ -65,6 +65,27 @@ class Gerador:
     def disponivel(self) -> bool:
         return bool(self.modelo) and self.estado != "erro"
 
+    async def preparar(self) -> None:
+        """Na partida: baixa o modelo (vários GB, só na primeira vez) em segundo plano, sem ocupar a VRAM.
+        Sem isso, a primeira cena que pede uma imagem ficava esperando o download inteiro."""
+        log.info("Imagens: %s", self.detalhe if self.disponivel else f"{self.estado} ({self.detalhe})")
+        if not self.disponivel:
+            return
+        self.estado, self.detalhe = "baixando", f"baixando {self.modelo.split('/')[-1]} (só na primeira vez)…"
+
+        def baixar() -> None:
+            from huggingface_hub import snapshot_download
+            snapshot_download(self.modelo)
+
+        t0 = time.perf_counter()
+        try:
+            await asyncio.to_thread(baixar)
+            self.estado, self.detalhe = "pronto", self.modelo.split("/")[-1]
+            log.info("Modelo de imagens %s no disco (%.0fs)", self.modelo, time.perf_counter() - t0)
+        except Exception as e:  # noqa: BLE001
+            self.estado, self.detalhe = "erro", f"não foi possível baixar {self.modelo}: {e}"[:200]
+            log.warning("Imagens: %s", self.detalhe)
+
     async def _abrir(self) -> None:
         if self._proc and self._proc.returncode is None:
             return
@@ -114,8 +135,8 @@ class Gerador:
 
     async def gerar(self, descricao: str) -> dict | None:
         descricao = " ".join(descricao.split())[:300]
-        if not descricao or not self.disponivel:
-            return None
+        if not descricao or not self.disponivel or self.estado == "baixando":
+            return None   # enquanto o modelo baixa, as cenas ficam com a foto ou o fundo animado
         chave = hashlib.sha1(f"gerar|{self.modelo}|{descricao.lower()}".encode()).hexdigest()[:16]
         meta_arq = CACHE / f"{chave}.json"
         if meta_arq.exists():

@@ -9,6 +9,7 @@ Set-Location $PSScriptRoot
 $venvPy = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 $verificar = Join-Path $PSScriptRoot "tools\verificar_python.py"
 $logs = Join-Path $PSScriptRoot "logs"
+$marcaImagem = Join-Path $PSScriptRoot "cache\.sem-geracao-de-imagens"
 New-Item -ItemType Directory -Force $logs | Out-Null
 
 function Falhar([string]$mensagem) {
@@ -57,19 +58,26 @@ function Instalar-Dependencias {
         Write-Host "Placa NVIDIA detectada: instalando bibliotecas CUDA para o Whisper..." -ForegroundColor Cyan
         & $venvPy -m pip install --disable-pip-version-check -r requirements-gpu.txt
         if ($LASTEXITCODE -ne 0) { Write-Host "Aviso: sem as libs CUDA o Whisper vai rodar na CPU." -ForegroundColor Yellow }
-        # placa com 12 GB ou mais: o Zak também gera imagens localmente (PyTorch com CUDA + diffusers, ~4 GB)
-        $vram = (& nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>$null | Measure-Object -Maximum).Maximum
-        if ($vram -ge 12000) {
-            Write-Host "GPU com $([math]::Round($vram / 1024)) GB: instalando a geracao de imagens do Zak..." -ForegroundColor Cyan
-            & $venvPy -m pip install --disable-pip-version-check torch --index-url https://download.pytorch.org/whl/cu130
-            & $venvPy -m pip install --disable-pip-version-check -r requirements-imagem.txt
-            if ($LASTEXITCODE -ne 0) { Write-Host "Aviso: sem a geracao de imagens, as cenas abstratas ficam so com o fundo animado." -ForegroundColor Yellow }
-        }
+        Instalar-Imagem
+    }
+}
+
+function Instalar-Imagem {
+    # placa com 12 GB ou mais: o Zak também gera imagens localmente (PyTorch com CUDA + diffusers, ~4 GB)
+    if (-not (Get-Command nvidia-smi -ErrorAction SilentlyContinue)) { return }
+    $vram = (& nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>$null | Measure-Object -Maximum).Maximum
+    if ($vram -lt 12000) { return }
+    Write-Host "GPU com $([math]::Round($vram / 1024)) GB: instalando a geracao de imagens do Zak (~4 GB)..." -ForegroundColor Cyan
+    & $venvPy -m pip install --disable-pip-version-check torch --index-url https://download.pytorch.org/whl/cu130
+    & $venvPy -m pip install --disable-pip-version-check -r requirements-imagem.txt
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Aviso: sem a geracao de imagens, as cenas abstratas ficam so com a foto ou o fundo animado." -ForegroundColor Yellow
+        New-Item -ItemType File -Force $marcaImagem | Out-Null   # não tenta de novo a cada partida (use -Reinstalar)
     }
 }
 
 # ── 1. Ambiente Python ──────────────────────────────────────
-if ($Reinstalar -and (Test-Path .venv)) { Remove-Item -Recurse -Force .venv }
+if ($Reinstalar -and (Test-Path .venv)) { Remove-Item -Recurse -Force .venv; Remove-Item -Force $marcaImagem -ErrorAction SilentlyContinue }
 
 if ((Test-Path $venvPy) -and -not (Testar-Python $venvPy)) {
     Write-Host "O .venv atual usa um Python incompativel; recriando..." -ForegroundColor Yellow
@@ -101,6 +109,12 @@ else {
 if ($LASTEXITCODE -ne 0) {
     & $venvPy $verificar --deps
     Falhar "As dependencias continuam com problema. Tente: iniciar.bat -Reinstalar"
+}
+
+# .venv criado antes da geração de imagens existir: instala agora (só em GPU com 12 GB ou mais)
+if (-not (Test-Path $marcaImagem)) {
+    & $venvPy -c "import importlib.util as u, importlib.metadata as m, sys; sys.exit(0 if u.find_spec('diffusers') and '+cu' in m.version('torch') else 1)" *> $null
+    if ($LASTEXITCODE -ne 0) { Instalar-Imagem }
 }
 
 # ── 2. Servidor ─────────────────────────────────────────────

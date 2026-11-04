@@ -68,6 +68,11 @@ retencao_minutos = 10
 mute_automatico = true
 # Aumente (ex.: 1.5) se ele não estiver captando falas mais baixas; diminua se captar ruído.
 sensibilidade = 1.0
+# Isolamento da voz (também troca na tela: Ajustes → Microfone):
+#   "volume"    = jeito antigo: qualquer som bem acima do ruído de fundo vira frase (teclado, porta, cadeira...).
+#   "voz"       = detector de voz neural (Silero): só fala humana abre uma frase. Recomendado.
+#   "voz_ruido" = detector + removedor de ruído neural (GTCRN) antes do Whisper.
+isolamento = "voz"
 
 [zak]
 # Zak: a tela vira a cena do assunto da conversa (em vez dos cards) e atende "Ei, Zak".
@@ -76,8 +81,8 @@ ativado = true
 # Proteção de informação: a tela mostra só o tema, sem falas, nomes ou números, e nada de assuntos
 # pessoais/delicados. Também liga e desliga em Ajustes (o que for escolhido lá vale mais).
 protecao = true
-# A cada quantos segundos o modo ambiente olha a conversa recente.
-ambiente_segundos = 20
+# Intervalo mínimo (s) entre leituras da conversa no modo ambiente (lê assim que chega fala nova).
+ambiente_segundos = 8
 # Voz: "kokoro" (local, na CPU; baixa ~340 MB na primeira vez) ou "nenhum" (só legenda).
 voz_motor = "kokoro"
 # Vozes masculinas pt-BR do Kokoro: pm_alex (padrão), pm_santa.

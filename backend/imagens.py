@@ -27,7 +27,7 @@ log = logging.getLogger("imagens")
 CACHE = RAIZ / "cache" / "imagens"
 COMMONS = "https://commons.wikimedia.org/w/api.php"
 LARGURA = 3840            # a tela é 4K: a foto já vem no tamanho dela
-MIN_LARGURA, MIN_ALTURA = 2400, 1200
+MIN_LARGURA, MIN_ALTURA = 1920, 1000   # a foto aparece suavizada por máscara e movimento: Full HD já fica bonita
 SEM_RESULTADO_S = 24 * 3600
 # a política do Wikimedia exige um User-Agent com contato (a página do projeto)
 UA = {"User-Agent": "PainelAmbiente/1.0 (https://github.com/RafaelRSCaldeira/dynamic-background)"}
@@ -44,7 +44,8 @@ _travas: dict[str, asyncio.Lock] = {}
 
 
 def _chave(consulta: str) -> str:
-    return hashlib.sha1(consulta.strip().lower().encode()).hexdigest()[:16]
+    # "v2": a busca passou a exigir relevância; as escolhas antigas (às vezes sem relação com o assunto) são ignoradas
+    return hashlib.sha1(("v2|" + consulta.strip().lower()).encode()).hexdigest()[:16]
 
 
 def _limpar_html(s: str | None) -> str:
@@ -136,13 +137,81 @@ def brilho(img: Image.Image) -> float:
 # ── busca ───────────────────────────────────────────────────
 # primeiro só entre as fotos que a comunidade do Commons já avaliou como de qualidade/destaque
 CURADAS = "incategory:Featured_pictures_on_Wikimedia_Commons|Quality_images|Valued_images_sorted_by_promotion_date"
+OPENVERSE = "https://api.openverse.org/v1/images/"
+_VAZIAS = {"the", "and", "with", "for", "from", "of", "in", "on", "at", "a", "an", "to", "photo", "image", "picture",
+           "cinematic", "beautiful", "view"}
+
+
+def _palavras(s: str) -> list[str]:
+    import unicodedata
+    s = "".join(c for c in unicodedata.normalize("NFD", s.lower()) if unicodedata.category(c) != "Mn")
+    return [w for w in re.findall(r"[a-z0-9]+", s) if len(w) > 2 and w not in _VAZIAS]
+
+
+def relevancia(consulta: str, titulo: str) -> float:
+    """Fração das palavras da consulta que aparecem no título da foto (comparando o começo das palavras:
+    "trams" casa com "tram"). Fotos de destaque sem relação com o assunto ficavam no topo da busca."""
+    q = _palavras(consulta)
+    if not q:
+        return 0.0
+    t = _palavras(titulo.removeprefix("File:"))
+    achou = sum(any(w[:5] == x[:5] for x in t) for w in q)
+    return achou / len(q)
 
 
 async def _candidatos(http: httpx.AsyncClient, consulta: str) -> list[dict]:
-    bons = await _pesquisar(http, f"{consulta} {CURADAS}")
-    if len(bons) < 4:
-        vistos = {c["titulo"] for c in bons}
-        bons += [c for c in await _pesquisar(http, consulta) if c["titulo"] not in vistos]
+    curadas, gerais, abertas = await asyncio.gather(
+        _pesquisar(http, f"{consulta} {CURADAS}"), _pesquisar(http, consulta), _openverse(http, consulta),
+        return_exceptions=True)
+    todas, vistos = [], set()
+    for lote, curada in ((curadas, True), (abertas, False), (gerais, False)):
+        if isinstance(lote, Exception):
+            log.info("busca de foto %r: %s", consulta, lote)
+            continue
+        for c in lote:
+            chave = c["original"].rsplit("/", 1)[-1].lower()
+            if chave in vistos:
+                continue
+            vistos.add(chave)
+            c["relevancia"] = relevancia(consulta, c["titulo"])
+            c["curada"] = curada
+            todas.append(c)
+    # só fotos que são DO assunto; as curadas e as mais relevantes primeiro
+    relevantes = [c for c in todas if c["relevancia"] >= 0.5 or (c["relevancia"] > 0 and len(_palavras(consulta)) > 2)]
+    relevantes.sort(key=lambda c: (-c["relevancia"], not c["curada"]))
+    return relevantes
+
+
+_openverse_pausa = 0.0
+
+
+async def _openverse(http: httpx.AsyncClient, termos: str) -> list[dict]:
+    """Openverse: fotos com licença aberta (Flickr, Commons e outras), sem chave. Bom para assuntos abstratos.
+    Sem chave, o limite de pedidos é baixo: quando ele recusa (429/401), a fonte descansa um tempo."""
+    global _openverse_pausa
+    if time.time() < _openverse_pausa:
+        return []
+    r = await http.get(OPENVERSE, headers=UA, timeout=12, params={
+        "q": termos, "page_size": 30, "aspect_ratio": "wide", "size": "large", "mature": "false",
+        "license_type": "all", "extension": "jpg"})
+    if r.status_code in (401, 403, 429):
+        _openverse_pausa = time.time() + 15 * 60
+        log.info("Openverse recusou (%s): pausado por 15 min, seguindo só com o Wikimedia Commons", r.status_code)
+        return []
+    r.raise_for_status()
+    bons = []
+    for p in r.json().get("results", []):
+        w, h = int(p.get("width") or 0), int(p.get("height") or 0)
+        if w < MIN_LARGURA or h < MIN_ALTURA or not 1.25 <= w / h <= 2.6:
+            continue
+        if not p.get("url") or RUINS.search(p.get("title") or "") or (p.get("filesize") or 0) > 25_000_000:
+            continue
+        licenca = f"CC {p.get('license', '').upper()} {p.get('license_version', '')}".strip()
+        bons.append({
+            "titulo": p.get("title") or "", "w": w, "h": h, "miniatura": p.get("thumbnail"), "original": p["url"],
+            "pagina": p.get("foreign_landing_url"), "autor": (p.get("creator") or "")[:80],
+            "licenca": "Domínio público" if p.get("license") in ("cc0", "pdm") else licenca, "fonte": "Openverse",
+        })
     return bons
 
 
@@ -200,7 +269,7 @@ async def buscar(http: httpx.AsyncClient, consulta: str) -> dict | None:
                 return None
 
         t0 = time.perf_counter()
-        candidatos = (await _candidatos(http, consulta))[:8]
+        candidatos = (await _candidatos(http, consulta))[:10]
         notas = []
         miniaturas = await asyncio.gather(*(_baixar(http, c["miniatura"]) for c in candidatos), return_exceptions=True)
         for c, mini in zip(candidatos, miniaturas):
@@ -210,7 +279,7 @@ async def buscar(http: httpx.AsyncClient, consulta: str) -> dict | None:
             if motivos:
                 log.debug("descartada %s: %s", c["titulo"], ", ".join(motivos))
                 continue
-            notas.append((nota, c))
+            notas.append((nota + c["relevancia"] * 1.5 + (0.3 if c["curada"] else 0), c))
         if not notas:
             meta_arq.write_text(json.dumps({"consulta": consulta, "t": time.time()}), encoding="utf-8")
             log.info("sem imagem boa para %r (%d candidatas)", consulta, len(candidatos))
@@ -218,7 +287,7 @@ async def buscar(http: httpx.AsyncClient, consulta: str) -> dict | None:
 
         _, melhor = max(notas, key=lambda n: n[0])
         url = melhor["original"]
-        if melhor["w"] > LARGURA and melhor["miniatura"]:
+        if melhor["w"] > LARGURA and re.search(r"/\d+px-", melhor["miniatura"] or ""):   # Commons: miniatura em 4K
             url = re.sub(r"/\d+px-", f"/{LARGURA}px-", melhor["miniatura"])
         img = await _baixar(http, url)
         img = img.convert("RGB")
@@ -231,7 +300,7 @@ async def buscar(http: httpx.AsyncClient, consulta: str) -> dict | None:
             "url": f"/api/imagem/arquivo/{arquivo}", "w": img.width, "h": img.height,
             "paleta": paleta(img), "brilho": brilho(img), "titulo": melhor["titulo"].removeprefix("File:").rsplit(".", 1)[0],
             "autor": melhor["autor"], "licenca": melhor["licenca"], "pagina": melhor["pagina"],
-            "fonte": "Wikimedia Commons",
+            "fonte": melhor.get("fonte", "Wikimedia Commons"),
         }
         meta_arq.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
         log.info("imagem para %r: %s (%.1fs, %d/%d aprovadas)", consulta, meta["titulo"][:60],

@@ -58,35 +58,38 @@ REGRAS_CENA = """Como descrever a CENA (a tela inteira é dela, uma TV 4K vista 
   "citacao" (texto, autor).
 - Não repita a conversa: ACRESCENTE informação nova e útil sobre o assunto (o que um bom guia ou uma boa enciclopédia diria).
 - Só fatos de que você tem certeza. Não invente números, datas nem nomes. Na dúvida, use menos blocos.
-- "foto": se o assunto é algo concreto que dá para fotografar (lugar, prédio, animal, comida, objeto, veículo, esporte),
-  2-4 palavras-chave EM INGLÊS para buscar uma foto bonita (ex.: "Lisbon Alfama tram", "espresso coffee cup", "Mount Everest").
-- "gerar": se o assunto é uma ideia abstrata (prazo, estratégia, inteligência artificial, música, sentimento), deixe "foto" vazio e
-  descreva EM INGLÊS uma imagem atmosférica e cinematográfica para ser gerada, sem texto, sem rostos (ex.: "glowing network of light
-  threads in deep blue space, cinematic, soft bokeh").
+- "foto": SEMPRE preencha: 2-3 palavras-chave EM INGLÊS de algo concreto e fotografável que represente o assunto, como estaria
+  no título de uma foto (ex.: "Lisbon tram", "espresso cup", "Mount Everest", "server room", "chess board", "hourglass").
+  Para ideias abstratas, escolha um objeto ou lugar que as simbolize (prazo → "hourglass"; estratégia → "chess board").
+- "gerar": SEMPRE preencha também (é a reserva se não houver foto boa): EM INGLÊS, uma imagem atmosférica e cinematográfica
+  do assunto, sem texto, sem rostos (ex.: "glowing network of light threads in deep blue space, cinematic, soft bokeh").
 - "cor": uma cor hex que combine com o assunto (ex.: "#e08a5f").
 - "lugar": se o assunto é uma cidade, o nome da cidade (a tela acrescenta sozinha hora local e clima); senão "".
 - Português do Brasil, textos curtos, sem emojis.
 
 Exemplos de cena (siga exatamente este formato, com "tipo" em cada bloco):
-{"foto": "Lisbon Alfama tram", "gerar": "", "cor": "#e08a5f", "lugar": "Lisboa", "blocos": [
+{"foto": "Lisbon tram", "gerar": "yellow tram on a steep cobblestone street at golden hour, cinematic", "cor": "#e08a5f", "lugar": "Lisboa", "blocos": [
   {"tipo": "destaque", "kicker": "Portugal", "titulo": "Lisboa", "sub": "A capital das sete colinas e dos bondes amarelos"},
   {"tipo": "fatos", "itens": [{"rotulo": "Moeda", "valor": "Euro"}, {"rotulo": "Voo de SP", "valor": "≈ 10 h"}, {"rotulo": "Idioma", "valor": "Português"}]}]}
-{"foto": "", "gerar": "glowing neural network of light threads in deep blue space, cinematic", "cor": "#5b7cff", "lugar": "", "blocos": [
+{"foto": "server room", "gerar": "glowing neural network of light threads in deep blue space, cinematic", "cor": "#5b7cff", "lugar": "", "blocos": [
   {"tipo": "destaque", "kicker": "Tecnologia", "titulo": "IA local", "sub": "Modelos que rodam na própria placa de vídeo, sem nuvem"},
   {"tipo": "lista", "titulo": "Bons usos", "itens": [{"texto": "Resumir reuniões"}, {"texto": "Buscar em documentos"}, {"texto": "Automatizar tarefas"}]}]}
-{"foto": "Mount Everest", "gerar": "", "cor": "#4aa3ff", "lugar": "", "blocos": [
+{"foto": "Mount Everest", "gerar": "snowy Himalayan summit above the clouds at dawn, cinematic", "cor": "#4aa3ff", "lugar": "", "blocos": [
   {"tipo": "numero", "rotulo": "Monte Everest", "valor": "8.849", "unidade": "m", "detalhe": "O ponto mais alto da Terra"},
   {"tipo": "comparacao", "lados": [{"nome": "Everest", "valor": "8.849 m"}, {"nome": "Pico da Neblina", "valor": "2.995 m", "detalhe": "o mais alto do Brasil"}]}]}"""
 
 AMBIENTE = """Você escolhe o que a tela de um escritório mostra, a partir da transcrição automática (pode ter erros)
 do que as pessoas falam perto dela. A tela é bonita e discreta: ela ilustra o ASSUNTO, nunca repete as falas.
 
+A tela deve ACOMPANHAR a conversa de perto: mudar sempre que o assunto muda. Olhe principalmente as ÚLTIMAS falas:
+se o assunto mudou, ilustre o assunto NOVO (o antigo já passou).
+
 Responda em JSON:
-- "mostrar": true só se houver um assunto claro e interessante de ilustrar (viagem, lugar, evento, tecnologia, produto,
-  esporte, ciência, filme, comida, um projeto de trabalho...). Conversa banal, cumprimentos, logística miúda, ruído,
-  frases soltas ou sem assunto definido: false.
+- "mostrar": true sempre que der para identificar um assunto, mesmo simples ou de trabalho (viagem, lugar, comida, clima,
+  esporte, tecnologia, um projeto, uma reunião, um produto, um filme, um bicho, um hobby, um problema técnico...).
+  false só para ruído, cumprimentos sem assunto ("bom dia", "tudo bem?") ou frases sem nenhum tema.
 - "assunto": 2 a 5 palavras que identificam o tema (ex.: "viagem a Lisboa").
-- "confianca": de 0 a 1, o quanto o assunto está claro na conversa.
+- "confianca": de 0 a 1, o quanto o assunto está claro nas últimas falas.
 - "sensivel": true se o assunto for pessoal ou delicado (RH, salário, demissão, saúde, doença, vida amorosa, família,
   conflito entre colegas, política, religião, finanças pessoais, segredo da empresa).
 - "cena": a cena (se "mostrar" for false, devolva {{"blocos": []}}).
@@ -243,8 +246,16 @@ def texto_da_cena(cena: dict) -> str:
     return " ".join(partes)
 
 
-def sensivel(texto: str) -> bool:
-    return bool(SENSIVEIS.search(texto) or SENSIVEIS.search(_sem_acento(texto)))
+# no texto da cena, só o que é pessoal de verdade: uma cena sobre Lisboa pode citar uma igreja ou um partido histórico
+PESSOAIS = re.compile(
+    r"\b(sal[aá]rio|demiss|demitid|rescis|advert[eê]ncia|processo trabalhista|doen[cç]a|diagn[oó]stic|exame m[eé]dic|"
+    r"gravidez|gr[aá]vida|c[aâ]ncer|depress|div[oó]rcio|namor|trai[cç][aã]o|fofoca|senha|confidencial|sigilo)",
+    re.I,
+)
+
+
+def sensivel(texto: str, padrao: re.Pattern = SENSIVEIS) -> bool:
+    return bool(padrao.search(texto) or padrao.search(_sem_acento(texto)))
 
 
 class Cerebro:
@@ -273,9 +284,15 @@ class Cerebro:
         return json.loads(conteudo)
 
     async def ambiente(self, http: httpx.AsyncClient, modelo: str, transcricao: str, protecao: bool,
-                       mostrado: str) -> dict | None:
+                       assunto: str = "", mostrado: str = "") -> dict | None:
         sistema = AMBIENTE.format(regras=REGRAS_CENA, protecao=PROTECAO_ATIVA if protecao else PROTECAO_DESLIGADA)
-        extra = f'\n\nA tela já mostra: "{mostrado}". Se o assunto continua o mesmo, repita o mesmo "assunto".' if mostrado else ""
+        extra = ""
+        if mostrado:
+            extra = (f"\n\nA tela já mostra: {mostrado}.\nSe as últimas falas continuam nesse assunto, repita o mesmo "
+                     '"assunto", mas monte a cena com OUTRO ângulo dele (outros blocos, outros fatos, outra "foto"). '
+                     "Se o assunto mudou, ilustre o novo.")
+        elif assunto:
+            extra = f'\n\nAssunto mostrado antes: "{assunto}". Se o assunto mudou, ilustre o novo.'
         dados = await self._chat(http, modelo, sistema, "Transcrição (a mais recente por último):\n\n" + transcricao + extra,
                                  ESQUEMA_AMBIENTE, 0.3)
         cena = limpar_cena(dados.get("cena"))
@@ -286,7 +303,7 @@ class Cerebro:
             "sensivel": bool(dados.get("sensivel")),
             "cena": cena,
         }
-        if r["sensivel"] or (protecao and sensivel(r["assunto"] + " " + texto_da_cena(cena))):
+        if r["sensivel"] or (protecao and (sensivel(r["assunto"]) or sensivel(texto_da_cena(cena), PESSOAIS))):
             r["mostrar"] = False
             r["sensivel"] = True
         return r

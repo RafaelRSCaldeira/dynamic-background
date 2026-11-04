@@ -28,11 +28,12 @@ PADRAO: dict = {
         "retencao_minutos": 10,
         "mute_automatico": True,
         "sensibilidade": 1.0,
+        "isolamento": "voz",
     },
     "zak": {
         "ativado": False,
         "protecao": True,          # proteção de informação (também liga/desliga em Ajustes)
-        "ambiente_segundos": 20,   # a cada quanto tempo o modo ambiente olha a conversa
+        "ambiente_segundos": 8,    # intervalo mínimo entre leituras da conversa no modo ambiente
         "voz_motor": "kokoro",     # kokoro | nenhum
         "voz": "pm_alex",          # voz masculina pt-BR do Kokoro
         "voz_velocidade": 1.0,

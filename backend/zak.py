@@ -1,8 +1,8 @@
 """Zak: o assistente da sala.
 
-- Modo ambiente: a cada ~20 s olha a conversa recente e, se houver um assunto claro (e não sensível),
-  transforma a tela na cena desse assunto. O assunto precisa se repetir em duas leituras para trocar
-  a cena (a tela não fica pulando a cada frase).
+- Modo ambiente: assim que chega fala nova (no máximo a cada ~8 s) olha a conversa recente e, se houver
+  um assunto (e não sensível), transforma a tela na cena desse assunto já na primeira leitura. Uma cena
+  fica pelo menos 12 s; se o assunto continua, a cada ~35 s a tela mostra outro ângulo dele.
 - "Ei, Zak": a frase reconhecida pelo Whisper que começa chamando o Zak vira um pedido: responder,
   timer, lembrete, música, limpar a tela, parar de ouvir. A resposta é falada (voz local) e mostrada na tela.
 - Eco: enquanto o Zak fala, o que o microfone capta é descartado (é a própria voz dele), a não ser que
@@ -34,25 +34,65 @@ log = logging.getLogger("zak")
 AGENDA = RAIZ / "cache" / "zak_agenda.json"
 
 ESPERA_PEDIDO_S = 8          # depois de um "Ei, Zak" sozinho, quanto tempo ele espera o pedido
-JANELA_AMBIENTE_MIN = 2.5    # quanto da conversa recente o modo ambiente lê
-MIN_PALAVRAS = 14
-PERMANENCIA_S = 45           # uma cena do ambiente fica pelo menos isso antes de dar lugar a outra
-PRIORIDADE_CONVERSA_S = 75   # depois de responder alguém, o ambiente não troca a tela por esse tempo
+JANELA_AMBIENTE_MIN = 1.5    # quanto da conversa recente o modo ambiente lê (curto: assunto novo pesa logo)
+MIN_PALAVRAS = 6
+PERMANENCIA_S = 12           # uma cena do ambiente fica pelo menos isso antes de dar lugar a outro assunto
+VARIAR_S = 35                # mesmo assunto por mais que isso: a tela mostra outro ângulo dele
+PRIORIDADE_CONVERSA_S = 30   # depois de responder alguém, o ambiente não troca a tela por esse tempo
+CONFIANCA_MIN = 0.4
+RECENTE_S = 40               # falas dos últimos X s definem o assunto; as anteriores só dão contexto
 ECO_FOLGA_S = 0.8
 
-# "Ei, Zak" e variações que o Whisper costuma escrever. Sem o "ei", só vale no começo da frase.
-_PREFIXO = r"(?:ei|hei|hey|ey|e\s*a[ií]|oi|ol[aá]|ok|okay|al[oô]|[oô])"
-_NOME = r"(?:zak|zack|zac|zach|zaque|zaki|zake|zaq|zeck|zeke|zéqu?e?)"
-_NOME_FROUXO = r"(?:sac|saque|sack|zaca|zag|jack|zek)"
-_CHAMADO = re.compile(rf"(?:^|[\s,.!?;:])(?:{_PREFIXO}[\s,.!]+(?:{_NOME}|{_NOME_FROUXO}))\b[\s,.!?;:-]*", re.I)
-_CHAMADO_INICIO = re.compile(rf"^\W*{_NOME}\b[\s,.!?;:-]*", re.I)
+# "Ei, Zak" e as formas como o Whisper costuma escrever (medido com vozes reais e sintéticas):
+# "E Zak", "Eizaki", "Ozaki", "Ei, Zá", "Ei, Isaac", "Eis aqui"... A busca é feita no texto sem acentos.
+_NOME = r"(?:zak|zack|zac|zach|zaque|zaqui|zaki|zake|zaq|zeck|zeke|zek|zequi|zaky)"   # estes valem até sem "ei"
+_NOME_FROUXO = rf"(?:{_NOME}|za|sac|sak|saque|saqui|sack|zaca|zag|jack|isaac|izak|izaque|isaque)"   # só depois de "ei"
+_EI = r"(?:ei|hei|hey|ey|e\s*ai|oi|ola|ok|okay|alo)"
+_FIM = r"(?![a-z0-9])[\s,.!?;:-]*"
+_CHAMADOS = [
+    re.compile(rf"^\W*(?:{_EI}[\s,.!?]*)?{_NOME}{_FIM}"),           # "Zak, ...", "Ei Zak", "Eizak"
+    re.compile(rf"^\W*(?:e|o|ou|eu)[\s,.!?]*{_NOME}{_FIM}"),         # "E Zak", "O Zak", "Ozaki" ("ei" mal ouvido)
+    re.compile(rf"^\W*{_EI}[\s,.!?]*{_NOME_FROUXO}{_FIM}"),          # "Ei, Zá", "Ei, Isaac", "Eisaque"
+    re.compile(rf"^\W*eis\s+a?qui{_FIM}"),                            # "Ei, Zak" ouvido como "Eis aqui"
+    re.compile(rf"(?:^|[\s,.!?;:]){_EI}[\s,.!]+{_NOME_FROUXO}{_FIM}"),   # no meio da frase, só com "ei"
+]
 _PARE = re.compile(r"^(?:para|pare|chega|sil[eê]ncio|cala(?:-se| a boca)?|quieto|stop|espera|pode parar)[\s.!]*$", re.I)
-_CHAMADO_JUNTO = re.compile(r"^\W*(?:ei|hei|hey)(?:zak|zack|zac|zek|zeck|zeke|zaque)\b[\s,.!?;:-]*", re.I)   # "Eizek, ..."
+
+
+# Comandos simples não passam pelo modelo: mais rápido e sem mal-entendido ("para a música" virava "o que quer ouvir?").
+_ATALHOS = [
+    ("parar_musica", re.compile(r"\b(?:para|pare|parar|desliga|desligar|tira|chega de|cala)\b.*\b(?:musica|radio|som)\b")),
+    ("cancelar_timer", re.compile(r"\b(?:cancela|cancelar|para|pare|desliga|tira)\b.*\b(?:timer|cronometro|alarme|contagem)\b")),
+    ("limpar_tela", re.compile(r"\b(?:limpa|limpar|apaga|apagar|tira|fecha)\b.*\btela\b")),
+    ("volume_mais", re.compile(r"\b(?:aumenta|aumentar|sobe|subir|levanta)\b.*\b(?:volume|som|musica)\b|\bmais alto\b")),
+    ("volume_menos", re.compile(r"\b(?:abaixa|abaixar|diminui|diminuir|baixa|baixar)\b.*\b(?:volume|som|musica)\b|\bmais baixo\b")),
+]
+# palavras que justificam a ação "clima" (o modelo às vezes a escolhia para perguntas como "altura do Everest")
+_CLIMA = re.compile(r"\b(?:tempo|clima|chuv\w*|chove\w*|frio|calor|graus|temperatura|hora|horas|sol|nublad\w*|previs\w*|vento|neve)\b")
+
+
+def atalho(frase: str) -> dict | None:
+    """Pedido simples reconhecido sem o modelo (no mesmo formato do Cerebro.pedido)."""
+    base = _base(frase)
+    if len(base.split()) > 8 or re.search(r"\blembr|\bdaqui\b|\bdepois\b|\bquando\b|\bas \d|\bem \d", base):
+        return None   # "me lembra de parar a música às 3" é um lembrete, não um comando para agora
+    for acao, padrao in _ATALHOS:
+        if padrao.search(base):
+            volume = acao.removeprefix("volume_") if acao.startswith("volume_") else ""
+            return {"acao": "volume" if volume else acao, "volume": volume, "segundos": 0, "rotulo": "", "em_minutos": 0,
+                    "horario": "", "texto": "", "estilo": "", "lugar": "", "pesquisar": "", "fala": "", "cena": {"blocos": []}}
+    return None
+
+
+def _base(texto: str) -> str:
+    """Minúsculas e sem acentos, letra por letra (mesmo tamanho do original, para recortar o pedido)."""
+    return "".join((unicodedata.normalize("NFD", c)[:1] or c).lower() for c in texto)
 
 
 def chamado(texto: str) -> str | None:
     """Se a frase chama o Zak, devolve o pedido (pode ser ""); senão None."""
-    m = _CHAMADO.search(texto) or _CHAMADO_INICIO.search(texto) or _CHAMADO_JUNTO.search(texto)
+    base = _base(texto)
+    m = next((m for m in (r.search(base) for r in _CHAMADOS) if m), None)
     if not m:
         return None
     return texto[m.end():].strip(" ,.!?-")
@@ -147,16 +187,30 @@ async def _lugar(http: httpx.AsyncClient, nome: str) -> dict | None:
         return None
 
 
+_RADIO_HOSTS = ["all.api.radio-browser.info", "de1.api.radio-browser.info", "nl1.api.radio-browser.info",
+                "at1.api.radio-browser.info"]
+
+
 async def _radio(http: httpx.AsyncClient, estilo: str) -> dict | None:
     """Uma rádio online gratuita do estilo pedido (radio-browser.info, base aberta de rádios)."""
     termos = _norm(estilo).split() or ["lofi"]
 
+    async def pesquisar(params: dict) -> list:
+        erro = None
+        for host in _RADIO_HOSTS:   # o endereço "all" às vezes cai num espelho fora do ar: tenta os outros
+            try:
+                r = await http.get(f"https://{host}/json/stations/search", headers=UA, timeout=8, params={
+                    **params, "order": "clickcount", "reverse": "true", "limit": 15, "hidebroken": "true"})
+                r.raise_for_status()
+                return r.json()
+            except Exception as e:  # noqa: BLE001
+                erro = e
+        raise erro
+
     async def buscar():
         for params in ({"tag": " ".join(termos)}, {"tag": termos[0]}, {"name": " ".join(termos)}):
-            r = await http.get("https://all.api.radio-browser.info/json/stations/search", headers=UA, timeout=10, params={
-                **params, "order": "clickcount", "reverse": "true", "limit": 15, "hidebroken": "true"})
-            r.raise_for_status()
-            boas = [s for s in r.json() if s.get("url_resolved") and s.get("codec", "").upper() in ("MP3", "AAC", "AAC+", "OGG")
+            achadas = await pesquisar(params)
+            boas = [s for s in achadas if s.get("url_resolved") and s.get("codec", "").upper() in ("MP3", "AAC", "AAC+", "OGG")
                     and int(s.get("bitrate") or 128) >= 64]
             if boas:
                 boas.sort(key=lambda s: (not s["url_resolved"].startswith("https"), -int(s.get("clickcount") or 0)))
@@ -193,7 +247,6 @@ class Zak:
         self.cena_origem = ""
         self.cena_em = 0.0
         self.assunto = ""
-        self.candidato = ""
         self.timers: list[dict] = []
         self.lembretes: list[dict] = []
         self.musica: dict | None = None
@@ -207,7 +260,7 @@ class Zak:
         return {
             "tipo": "zak", "estado": self.estado, "protecao": self.protecao,
             "voz": self.voz.estado, "voz_detalhe": self.voz.detalhe,
-            "imagem": {"pronto": "pronta", "carregando": "carregando", "gerando": "gerando", "erro": "erro",
+            "imagem": {"pronto": "pronta", "carregando": "carregando", "gerando": "gerando", "erro": "erro", "baixando": "baixando",
                        "indisponivel": "indisponível", "desligado": "desligada"}.get(self.gerador.estado, ""),
             "imagem_detalhe": self.gerador.detalhe,
             "timers": self.timers, "lembretes": sorted(self.lembretes, key=lambda l: l["quando"])[:5],
@@ -257,44 +310,63 @@ class Zak:
         self.loop, self.http = asyncio.get_running_loop(), http
         await asyncio.to_thread(self.voz.carregar)
         self.publicar()
-        await asyncio.gather(self._laco_ambiente(), self._laco_relogio())
+        await asyncio.gather(self._laco_ambiente(), self._laco_relogio(), self._preparar_imagens())
+
+    async def _preparar_imagens(self) -> None:
+        await self.gerador.preparar()
+        self.publicar()
 
     async def _laco_ambiente(self) -> None:
-        intervalo = max(8, int(self.cfg.get("ambiente_segundos", 20)))
-        ultima_versao = -1
+        """Lê a conversa assim que chega fala nova (no máximo a cada `ambiente_segundos`) e troca a tela
+        já na primeira leitura de um assunto novo. O mesmo assunto, se continua, ganha outro ângulo."""
+        intervalo = max(4, int(self.cfg.get("ambiente_segundos", 8)))
+        ultima_versao, ultima_leitura = -1, 0.0
         while True:
-            await asyncio.sleep(intervalo)
+            await asyncio.sleep(1)
             try:
+                agora = time.time()
+                if agora - ultima_leitura < intervalo:
+                    continue
                 if not self.telas or self.sala.mutado or self.estado != "repouso" or self._falando_agora:
                     continue
-                if self.cena_origem == "conversa" and time.time() - self.cena_em < PRIORIDADE_CONVERSA_S:
+                if self.cena_origem == "conversa" and agora - self.cena_em < PRIORIDADE_CONVERSA_S:
                     continue
-                if self.cena_origem == "ambiente" and time.time() - self.cena_em < PERMANENCIA_S:
+                if self.cena_origem == "ambiente" and agora - self.cena_em < PERMANENCIA_S:
+                    continue                                     # a cena acabou de entrar: não pisca
+                versao, linhas = self.sala.linhas_recentes(JANELA_AMBIENTE_MIN)
+                agora_ = [t for quando, t in linhas if agora - quando <= RECENTE_S]
+                antes = [t for quando, t in linhas if agora - quando > RECENTE_S]
+                if versao == ultima_versao or len(" ".join(agora_).split()) < MIN_PALAVRAS:
                     continue
-                versao, texto = self.sala.texto_recente(JANELA_AMBIENTE_MIN)
-                if versao == ultima_versao or len(texto.split()) < MIN_PALAVRAS:
-                    continue
-                ultima_versao = versao
-                r = await self.cerebro.ambiente(self.http, self.sala.modelo_ia, texto, self.protecao,
-                                                self.assunto if self.cena_origem == "ambiente" else "")
+                # o assunto sai das falas recentes; as anteriores são só contexto (senão o assunto velho domina)
+                texto = (("Antes (só contexto):\n" + "\n".join(antes) + "\n\n" if antes else "")
+                         + "AGORA (as últimas falas — é delas que sai o assunto):\n" + "\n".join(agora_))
+                ultima_versao, ultima_leitura = versao, agora
+                mostrado = self._resumo_cena() if self.cena_origem == "ambiente" else ""
+                t0 = time.perf_counter()
+                r = await self.cerebro.ambiente(self.http, self.sala.modelo_ia, texto, self.protecao, self.assunto, mostrado)
                 if self.estado != "repouso" or self.sala.versao < versao:   # alguém chamou o Zak / pediu esquecer
                     continue
-                log.info("ambiente: %s (%.2f%s) %s", r["assunto"] or "—", r["confianca"],
-                         ", sensível" if r["sensivel"] else "", "→ mostrar" if r["mostrar"] else "")
-                if not r["mostrar"] or r["confianca"] < 0.55:
-                    self.candidato = ""
+                log.info("ambiente: %s (%.2f%s, %.1fs) %s", r["assunto"] or "—", r["confianca"],
+                         ", sensível" if r["sensivel"] else "", time.perf_counter() - t0, "→ mostrar" if r["mostrar"] else "")
+                if not r["mostrar"] or r["confianca"] < CONFIANCA_MIN:
                     continue
+                desde = time.time() - self.cena_em
                 if self.cena_origem == "ambiente" and parecido(r["assunto"], self.assunto):
-                    self.cena_em = time.time()           # mesmo assunto: a cena continua na tela
-                    self._enviar({"tipo": "zak_manter"})
-                    continue
-                if parecido(r["assunto"], self.candidato) or r["confianca"] >= 0.85:
-                    self.candidato = ""
-                    await self._mostrar(r["cena"], "ambiente", assunto=r["assunto"])
-                else:
-                    self.candidato = r["assunto"]         # espera a próxima leitura confirmar o assunto
+                    if desde < VARIAR_S:
+                        self._enviar({"tipo": "zak_manter"})   # mesmo assunto, cena recente: continua na tela
+                        continue
+                await self._mostrar(r["cena"], "ambiente", assunto=r["assunto"])
             except Exception as e:  # noqa: BLE001
                 log.warning("modo ambiente: %s", e)
+
+    def _resumo_cena(self) -> str:
+        """O que a tela mostra agora (para a próxima cena do mesmo assunto trazer outro ângulo)."""
+        if not self.cena:
+            return ""
+        titulos = [b.get("titulo") or b.get("rotulo") or b.get("tipo") for b in self.cena.get("blocos", [])]
+        foto = self.cena.get("visual", {}).get("busca", "")
+        return f'{self.assunto} — blocos: {", ".join(t for t in titulos if t)}' + (f'; foto: "{foto}"' if foto else "")
 
     async def _laco_relogio(self) -> None:
         while True:
@@ -378,10 +450,19 @@ class Zak:
         async with self._pedidos:
             self.esperando_ate = 0
             self._estado("pensando", original or frase)
+            if r := atalho(frase):
+                log.info("pedido: %s → %s (atalho)", frase, r["acao"])
+                self._estado("repouso")
+                await self._executar(r, original or frase)
+                return
             log.info("pedido: %s", frase)
             try:
                 cidade = self.cfg_local.get("cidade") or ""
                 r = await self.cerebro.pedido(self.http, self.sala.modelo_ia, frase, cidade, await self._clima_local())
+                if r["acao"] == "clima" and not _CLIMA.search(_base(frase)):
+                    # "altura do Everest" não é pergunta de clima: responde de verdade, com a Wikipédia de apoio
+                    log.info("ação clima descartada para: %s", frase)
+                    r["acao"], r["pesquisar"] = "responder", r["pesquisar"] or frase
                 if r["pesquisar"] and r["acao"] == "responder":
                     trecho = await _wikipedia(self.http, r["pesquisar"])
                     if trecho:

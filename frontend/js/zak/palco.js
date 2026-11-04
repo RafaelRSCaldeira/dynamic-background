@@ -108,7 +108,7 @@ export class Palco {
   /** Foto real (busca) e, se não houver uma bonita o bastante, imagem gerada localmente (gerar). */
   async _buscarFoto(cena, token) {
     const tentativas = [];
-    if (cena.visual.busca) tentativas.push([`/api/imagem?q=${encodeURIComponent(cena.visual.busca)}`, 15000]);
+    if (cena.visual.busca) tentativas.push([`/api/imagem?q=${encodeURIComponent(cena.visual.busca)}`, 30000]);
     if (cena.visual.gerar) tentativas.push([`/api/imagem/gerar?p=${encodeURIComponent(cena.visual.gerar)}`, 90000]);
     let limpou = false;
     for (const [url, ms] of tentativas) {
