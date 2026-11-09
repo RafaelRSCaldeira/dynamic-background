@@ -50,6 +50,8 @@ export const mini = {
   grafico: ui('<path d="M3 17l5-5 4 4 8-8"/><path d="M15 8h5v5"/>'),
   ceu: ui('<path d="M3 18h18"/><path d="M6 18a6 6 0 0 1 12 0"/><path d="M12 6V4M5.6 8.6 4.2 7.2M18.4 8.6l1.4-1.4"/>'),
   jornal: ui('<path d="M4 5h13v14a2 2 0 0 0 2 2H6a2 2 0 0 1-2-2z"/><path d="M17 9h3v10a2 2 0 0 1-2 2"/><path d="M8 9h5M8 13h5M8 17h3"/>'),
+  som: ui('<path d="M4 9.5h3.5L12 5v14l-4.5-4.5H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/>'),
+  semSom: ui('<path d="M4 9.5h3.5L12 5v14l-4.5-4.5H4z"/><path d="m16 9.5 5 5M21 9.5l-5 5"/>'),
   mic: ui('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>'),
   micOff: ui('<path d="M15 9.3V6a3 3 0 0 0-5.7-1.3M9 9v2a3 3 0 0 0 4.9 2.3"/><path d="M19 11a7 7 0 0 1-1.2 3.9M5 11a7 7 0 0 0 10.6 6M12 18v3M3 3l18 18"/>'),
   camera: ui('<path d="M15 10l5-3v10l-5-3z"/><rect x="3" y="6" width="12" height="12" rx="3"/>'),

@@ -40,7 +40,7 @@ ESQUEMA_AMBIENTE = {"type": "object", "properties": {
 }, "required": ["mostrar", "assunto", "confianca", "sensivel", "cena"]}
 
 ACOES = ["responder", "timer", "lembrete", "cancelar_timer", "musica", "parar_musica", "volume",
-         "limpar_tela", "parar_de_ouvir", "clima"]
+         "limpar_tela", "parar_de_ouvir", "clima", "ignorar"]
 ESQUEMA_PEDIDO = {"type": "object", "properties": {
     "acao": {"type": "string", "enum": ACOES},
     "segundos": {"type": "integer"}, "rotulo": {"type": "string"},
@@ -127,6 +127,19 @@ Formato: {{"acao": "responder", "segundos": 0, "rotulo": "", "em_minutos": 0, "h
 Se você não souber e não der para pesquisar, diga isso com simplicidade. Nunca invente.
 
 {regras}"""
+
+CONVERSA = """Conversa recente com você (a mais antiga primeiro). A frase nova pode continuar essa conversa:
+"e a do K2?" depois de perguntarem a altura do Everest quer dizer "qual a altura do K2?". Use o contexto.
+{turnos}"""
+
+SEGUIMENTO = """ATENÇÃO: desta vez a pessoa NÃO disse "Ei, Zak". A frase foi captada logo depois da sua última resposta,
+num escritório com várias pessoas conversando. Decida primeiro: ela é PARA VOCÊ?
+- É para você: continua o assunto da conversa com você ("e a do K2?", "quanto tempo leva pra subir?", "mostra uma foto"),
+  ou é claramente uma pergunta ou um pedido a um assistente ("qual a capital da Austrália?", "coloca um timer").
+- NÃO é para você: comentário entre colegas, notícia do escritório, convite, fofoca, desabafo, assunto pessoal,
+  algo dirigido a outra pessoa ("alguém quer café?", "o estacionamento vai fechar amanhã", "o João já mandou o relatório?",
+  "hoje o almoço é no japonês"). Nesses casos responda só {"acao": "ignorar", "fala": "", "cena": {"blocos": []}}.
+Responder a quem não falou com você é intrometido: na dúvida entre um comentário solto e uma pergunta, ignore."""
 
 COM_PESQUISA = """Resultado da pesquisa na Wikipédia sobre "{termo}":
 {trecho}
@@ -309,11 +322,18 @@ class Cerebro:
         return r
 
     async def pedido(self, http: httpx.AsyncClient, modelo: str, frase: str, cidade: str, clima: str,
-                     pesquisa: tuple[str, str] | None = None) -> dict:
+                     pesquisa: tuple[str, str] | None = None, historico: list[tuple[str, str]] | None = None,
+                     seguimento: bool = False) -> dict:
         d = datetime.now()
         agora = f"{DIAS[d.weekday()]}, {d:%d/%m/%Y}, {d:%H:%M}"
         sistema = PEDIDO.format(agora=agora, cidade=cidade, clima=clima, regras=REGRAS_CENA)
-        usuario = f'Frase dita para você: "{frase}"'
+        usuario = ""
+        if historico:
+            turnos = "\n".join(f'Pessoa: "{p}"\nZak: "{z}"' for p, z in historico)
+            usuario += CONVERSA.format(turnos=turnos) + "\n\n"
+        if seguimento:
+            usuario += SEGUIMENTO + "\n\n"
+        usuario += f'Frase dita para você: "{frase}"'
         if pesquisa:
             usuario += "\n\n" + COM_PESQUISA.format(termo=pesquisa[0], trecho=pesquisa[1])
         dados = await self._chat(http, modelo, sistema, usuario, ESQUEMA_PEDIDO, 0.4)

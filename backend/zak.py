@@ -34,6 +34,9 @@ log = logging.getLogger("zak")
 AGENDA = RAIZ / "cache" / "zak_agenda.json"
 
 ESPERA_PEDIDO_S = 8          # depois de um "Ei, Zak" sozinho, quanto tempo ele espera o pedido
+CONVERSA_S = 10              # depois de responder, ele continua ouvindo por isso (conversa sem repetir "Ei, Zak")
+DIALOGO_TURNOS = 6           # quantas trocas recentes ele lembra
+DIALOGO_VALIDADE_S = 180     # depois disso sem falar com ele, a conversa recomeça do zero
 JANELA_AMBIENTE_MIN = 1.5    # quanto da conversa recente o modo ambiente lê (curto: assunto novo pesa logo)
 MIN_PALAVRAS = 6
 PERMANENCIA_S = 12           # uma cena do ambiente fica pelo menos isso antes de dar lugar a outro assunto
@@ -67,6 +70,12 @@ _ATALHOS = [
     ("volume_mais", re.compile(r"\b(?:aumenta|aumentar|sobe|subir|levanta)\b.*\b(?:volume|som|musica)\b|\bmais alto\b")),
     ("volume_menos", re.compile(r"\b(?:abaixa|abaixar|diminui|diminuir|baixa|baixar)\b.*\b(?:volume|som|musica)\b|\bmais baixo\b")),
 ]
+# fim de conversa: responde curto e para de esperar a próxima frase
+_ENCERRAR = re.compile(r"^(?:(?:ok|beleza|certo|ta|show|perfeito|otimo|entendi)[\s,.!]*)?"
+                       r"(?:muito )?(?:obrigad[oa]|brigad[oa]|valeu|vlw|tchau|era isso|e so isso|so isso|"
+                       r"nada nao|deixa pra la|esquece|pode ir)\b")
+# sem "Ei, Zak", quem fala com o grupo ("vocês viram...", "pessoal, ...") não está falando com ele
+_PARA_OS_OUTROS = re.compile(r"\b(?:voces|pessoal|galera|alguem)\b")
 # palavras que justificam a ação "clima" (o modelo às vezes a escolhia para perguntas como "altura do Everest")
 _CLIMA = re.compile(r"\b(?:tempo|clima|chuv\w*|chove\w*|frio|calor|graus|temperatura|hora|horas|sol|nublad\w*|previs\w*|vento|neve)\b")
 
@@ -233,11 +242,15 @@ class Zak:
         self.gerador = Gerador(cfg)
         prefs = modelos.ler()
         self.protecao: bool = bool(prefs.get("zak_protecao", cfg.get("protecao", True)))
+        self.som: bool = bool(prefs.get("zak_som", True))   # botão de som da tela: sem som, ele só mostra a legenda
         self.loop: asyncio.AbstractEventLoop | None = None
         self.http: httpx.AsyncClient | None = None
         self.telas: set[int] = set()
         self.estado = "repouso"            # repouso | ouvindo | pensando
         self.esperando_ate = 0.0
+        self.janela_conversa = False       # a espera atual é a continuação de uma conversa (sem "Ei, Zak")
+        self._abrir_conversa = False       # quando a fala atual terminar, continua ouvindo
+        self.dialogo: list[dict] = []      # trocas recentes {t, pessoa, zak}
         self.falando = False
         self.falando_ate = 0.0
         self.fala_atual = ""
@@ -258,7 +271,7 @@ class Zak:
     # ── estado e publicação ─────────────────────────────────
     def snapshot(self) -> dict:
         return {
-            "tipo": "zak", "estado": self.estado, "protecao": self.protecao,
+            "tipo": "zak", "estado": self.estado, "protecao": self.protecao, "som": self.som,
             "voz": self.voz.estado, "voz_detalhe": self.voz.detalhe,
             "imagem": {"pronto": "pronta", "carregando": "carregando", "gerando": "gerando", "erro": "erro", "baixando": "baixando",
                        "indisponivel": "indisponível", "desligado": "desligada"}.get(self.gerador.estado, ""),
@@ -275,15 +288,22 @@ class Zak:
     def publicar(self) -> None:
         self._enviar(self.snapshot())
 
-    def _estado(self, estado: str, ouviu: str = "") -> None:
+    def _estado(self, estado: str, ouviu: str = "", continuar: bool = False) -> None:
         self.estado = estado
-        self._enviar({"tipo": "zak_estado", "estado": estado, "ouviu": ouviu})
+        self._enviar({"tipo": "zak_estado", "estado": estado, "ouviu": ouviu, "continuar": continuar})
 
     def definir_protecao(self, valor: bool) -> None:
         self.protecao = bool(valor)
         modelos.gravar(zak_protecao=self.protecao)
         if self.protecao and self.cena_origem == "ambiente":
             self.limpar_tela()   # a cena atual foi escolhida sem a proteção
+        self.publicar()
+
+    def definir_som(self, valor: bool) -> None:
+        self.som = bool(valor)
+        modelos.gravar(zak_som=self.som)
+        if not self.som:
+            self.calar()
         self.publicar()
 
     def tela_entrou(self, ident: int) -> None:
@@ -299,6 +319,9 @@ class Zak:
             self._falando_desde = time.time()
         else:
             self.falando_ate = time.time() + ECO_FOLGA_S
+            if self._abrir_conversa:
+                self._abrir_conversa = False
+                self._continuar_conversa()
 
     @property
     def _falando_agora(self) -> bool:
@@ -394,7 +417,7 @@ class Zak:
     # ── o que o microfone ouviu (chamado pela thread do Whisper) ──
     def ouvir(self, texto: str, inicio: float, fim: float) -> bool:
         """Decide o destino da frase. True = é do Zak (pedido ou eco): não entra na conversa da sala."""
-        if self.loop is None:
+        if self.loop is None or not self.telas:   # sem tela do Zak (painel clássico): tudo é conversa da sala
             return False
         agora = time.time()
         pedido = chamado(texto)
@@ -418,13 +441,29 @@ class Zak:
             else:
                 self._agendar(self.pedido(pedido, texto))
             return True
-        if agora < self.esperando_ate:
+        # na espera (depois de "Ei, Zak" ou logo depois de uma resposta): vale a fala que COMEÇOU dentro dela,
+        # mesmo que a transcrição chegue um pouco depois
+        if min(agora, inicio) < self.esperando_ate:
             self.esperando_ate = 0
-            self._agendar(self.pedido(texto, texto))
+            self._agendar(self.pedido(texto, texto, seguimento=self.janela_conversa))
             return True
         return False
 
+    def _continuar_conversa(self) -> None:
+        """Logo depois de responder, ele continua ouvindo: a próxima frase não precisa de "Ei, Zak"."""
+        self.janela_conversa = True
+        self.esperando_ate = time.time() + CONVERSA_S
+        self._estado("ouvindo", continuar=True)
+        ate = self.esperando_ate
+
+        async def desistir():
+            await asyncio.sleep(CONVERSA_S + 0.5)
+            if self.estado == "ouvindo" and self.esperando_ate == ate:
+                self._estado("repouso")
+        self._agendar(desistir())
+
     def _ouvir_pedido(self) -> None:
+        self.janela_conversa = False
         self.esperando_ate = time.time() + ESPERA_PEDIDO_S
         self.loop.call_soon_threadsafe(self._estado, "ouvindo", "")
 
@@ -438,27 +477,51 @@ class Zak:
         asyncio.run_coroutine_threadsafe(coro, self.loop)
 
     def calar(self) -> None:
+        self._abrir_conversa = False
         self._fala_id += 1                   # partes ainda sendo sintetizadas são abandonadas
         self.falando, self.falando_ate = False, time.time() + ECO_FOLGA_S
         self._enviar({"tipo": "zak_calar"})
 
     # ── pedidos ─────────────────────────────────────────────
-    async def pedido(self, frase: str, original: str = "") -> None:
+    async def pedido(self, frase: str, original: str = "", seguimento: bool = False) -> None:
+        """seguimento: a frase veio na continuação de uma conversa, sem "Ei, Zak" (pode nem ser para ele)."""
         frase = frase.strip()
         if not frase:
             return
         async with self._pedidos:
             self.esperando_ate = 0
             self._estado("pensando", original or frase)
+            if _ENCERRAR.match(_base(frase)) and len(frase.split()) <= 6:
+                log.info("pedido: %s → fim da conversa", frase)
+                self._estado("repouso")
+                self.dialogo.clear()
+                await self.falar("Por nada! Qualquer coisa, é só chamar." if re.search(r"brigad|valeu|vlw", _base(frase))
+                                 else "Combinado.")
+                return
             if r := atalho(frase):
                 log.info("pedido: %s → %s (atalho)", frase, r["acao"])
                 self._estado("repouso")
                 await self._executar(r, original or frase)
                 return
-            log.info("pedido: %s", frase)
+            if seguimento and _PARA_OS_OUTROS.search(_base(frase)):
+                log.info("não era para o Zak (fala com o grupo): %s", frase)
+                self._estado("repouso")
+                self.sala.adicionar_linha(original or frase)
+                return
+            log.info("pedido%s: %s", " (continuação)" if seguimento else "", frase)
+            historico = self._historico()
             try:
                 cidade = self.cfg_local.get("cidade") or ""
-                r = await self.cerebro.pedido(self.http, self.sala.modelo_ia, frase, cidade, await self._clima_local())
+                r = await self.cerebro.pedido(self.http, self.sala.modelo_ia, frase, cidade, await self._clima_local(),
+                                              historico=historico, seguimento=seguimento)
+                if r["acao"] == "ignorar":
+                    if seguimento:
+                        # era conversa entre as pessoas, não com ele: a frase volta para a sala e ele para de esperar
+                        log.info("não era para o Zak: %s", frase)
+                        self._estado("repouso")
+                        self.sala.adicionar_linha(original or frase)
+                        return
+                    r["acao"] = "responder"
                 if r["acao"] == "clima" and not _CLIMA.search(_base(frase)):
                     # "altura do Everest" não é pergunta de clima: responde de verdade, com a Wikipédia de apoio
                     log.info("ação clima descartada para: %s", frase)
@@ -467,16 +530,29 @@ class Zak:
                     trecho = await _wikipedia(self.http, r["pesquisar"])
                     if trecho:
                         r = await self.cerebro.pedido(self.http, self.sala.modelo_ia, frase, cidade,
-                                                      await self._clima_local(), (r["pesquisar"], trecho))
+                                                      await self._clima_local(), (r["pesquisar"], trecho),
+                                                      historico=historico)
+                        if r["acao"] == "ignorar":
+                            r["acao"] = "responder"
             except Exception as e:  # noqa: BLE001
                 log.warning("pedido falhou: %s", e)
                 self._estado("repouso")
                 await self.falar("Desculpa, meu cérebro não respondeu agora. Tenta de novo em instantes?")
                 return
             self._estado("repouso")
-            await self._executar(r, original or frase)
+            fala = await self._executar(r, original or frase)
+            self._lembrar(frase, fala or r["fala"])
 
-    async def _executar(self, r: dict, pergunta: str) -> None:
+    def _historico(self) -> list[tuple[str, str]]:
+        agora = time.time()
+        self.dialogo = [d for d in self.dialogo if agora - d["t"] < DIALOGO_VALIDADE_S][-DIALOGO_TURNOS:]
+        return [(d["pessoa"], d["zak"]) for d in self.dialogo]
+
+    def _lembrar(self, pessoa: str, zak: str) -> None:
+        self.dialogo.append({"t": time.time(), "pessoa": pessoa[:300], "zak": (zak or "(fez o que foi pedido)")[:300]})
+        self.dialogo = self.dialogo[-DIALOGO_TURNOS:]
+
+    async def _executar(self, r: dict, pergunta: str) -> str:
         acao, fala = r["acao"], r["fala"]
         if acao == "timer" and r["segundos"] > 0:
             t = {"id": next(self._ids), "ate": time.time() + r["segundos"], "total": r["segundos"], "rotulo": r["rotulo"]}
@@ -552,7 +628,9 @@ class Zak:
             await self._mostrar(r["cena"], "conversa", pergunta=pergunta)
         self.publicar()
         if fala:
+            self._abrir_conversa = True    # quando ele terminar de falar, continua ouvindo (sem "Ei, Zak")
             await self.falar(fala)
+        return fala
 
     def _quando(self, r: dict) -> float | None:
         m = re.fullmatch(r"(\d{1,2})(?:[:h](\d{2})?)?", (r["horario"] or "").strip())
@@ -608,8 +686,12 @@ class Zak:
         ident = self._fala_id
         self.fala_atual = texto
         partes = frases(texto)
-        self._enviar({"tipo": "zak_fala", "id": ident, "texto": texto, "audio": self.voz.pronta, "partes": len(partes)})
-        if not self.voz.pronta:
+        com_audio = self.voz.pronta and self.som
+        self._enviar({"tipo": "zak_fala", "id": ident, "texto": texto, "audio": com_audio, "partes": len(partes)})
+        if not com_audio:
+            if self._abrir_conversa:   # sem voz não há aviso de fim da fala: abre a conversa depois da leitura da legenda
+                self._abrir_conversa = False
+                self.loop.call_later(len(texto.split()) * 0.38 + 0.5, self._continuar_conversa)
             return
         for i, frase in enumerate(partes):
             try:

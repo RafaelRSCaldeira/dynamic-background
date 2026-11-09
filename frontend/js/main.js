@@ -22,16 +22,24 @@ const params = new URLSearchParams(location.search);
 // Zak: a tela vira a cena do assunto da conversa (protótipo: /?zak, demonstração: /?zak&demo)
 const modoZak = params.has('zak') || !!cfg.zak?.ativado;
 const W = nome => document.querySelector(`[data-w="${nome}"]`);
+// troca entre o Zak e o painel clássico: recarrega sem o ?zak (senão ele forçaria o Zak de novo)
+function trocarTela() {
+  const p = new URLSearchParams(location.search);
+  p.delete('zak'); p.delete('demo');
+  const q = p.toString().replace(/=(?=&|$)/g, '');
+  location.replace(location.pathname + (q ? '?' + q : '') + location.hash);
+}
 
 // ── Conexão em tempo real ───────────────────────────────────
 let widgetSala, ajustes, zakCliente = null, ultimoZak = null;
 const paraZak = [];   // mensagens do Zak que chegam antes de o módulo dele carregar
 const conexao = conectar(
   msg => {
-    if (msg.tipo === 'sala') { widgetSala.estado(msg); ajustes?.estado(msg); }
+    if (msg.tipo === 'sala') { widgetSala.estado(msg); ajustes?.estado(msg); pintarMic(msg); }
     else if (msg.tipo === 'nivel') widgetSala.nivel(msg.v);
+    else if (msg.tipo === 'tela' && msg.zak !== modoZak) trocarTela();   // Ajustes → Tela (vale para todas)
     else if (msg.tipo?.startsWith('zak')) {
-      if (msg.tipo === 'zak' && modoZak) { ultimoZak = msg; ajustes?.zak(msg); }
+      if (msg.tipo === 'zak' && modoZak) { ultimoZak = msg; ajustes?.zak(msg); pintarSom(msg.som !== false); }
       if (zakCliente) zakCliente.receber(msg); else if (modoZak) paraZak.push(msg);
     }
   },
@@ -189,6 +197,7 @@ if (modoZak) {
 }
 // alarme curto e suave (acorde que some), sem arquivo de áudio
 function tocarAlarme() {
+  if (!somLigado) return;
   try {
     const ctx = new AudioContext();
     [0, .9, 1.8].forEach(t0 => [523.25, 659.25, 783.99].forEach((f, i) => {
@@ -232,12 +241,39 @@ if (cfg.camera?.ativada && guardar.ler('camera', true)) camera.ligar().then(() =
 ajustes = iniciarAjustes({
   enviar: conexao.enviar, camera, alternarCamera, brincar,
   ociosidadeMin: cfg.camera?.ociosidade_minutos ?? 5,
+  modoZak,
 });
 if (ultimoZak) ajustes.zak(ultimoZak);
 // links diretos para testar: /#destaque-semana, /?debug (registra os gestos no console)
 const ancora = location.hash.match(/^#destaque-(\w+)/);
 if (ancora) destaque.irPara(ancora[1]);
 if (params.has('debug')) Object.assign(window, { __brincar: brincar, __destaque: destaque, __sala: widgetSala, __palco: palco, __zak: zak });
+// ── Microfone e som (botões separados): o microfone fecha de verdade; o som cala voz, música e avisos ──
+// (as mensagens podem chegar antes desta linha rodar, por causa dos await acima: nada aqui depende da ordem)
+const btnMic = document.getElementById('btn-mic'), btnSom = document.getElementById('btn-som');
+function pintarMic(msg) {
+  const btnMic = document.getElementById('btn-mic');
+  if (!('mutado' in msg)) return;
+  btnMic.innerHTML = msg.mutado ? mini.micOff : mini.mic;
+  btnMic.classList.toggle('desligado', !!msg.mutado);
+  btnMic.title = msg.mutado_auto && !msg.mutado_manual ? 'Microfone em uso por outro app (mute automático)'
+    : msg.mutado ? 'Microfone desligado: clique para ligar (M)' : 'Microfone ligado: clique para desligar (M)';
+}
+var somLigado = true;   // eslint-disable-line no-var -- var: pode ser usada antes desta linha
+function pintarSom(ligado) {
+  const btnSom = document.getElementById('btn-som');
+  somLigado = ligado;
+  btnSom.innerHTML = ligado ? mini.som : mini.semSom;
+  btnSom.classList.toggle('desligado', !ligado);
+  btnSom.title = ligado ? 'Som do Zak ligado: clique para silenciar (S)' : 'Zak em silêncio (só legenda): clique para ligar o som (S)';
+}
+btnMic.innerHTML = mini.mic;
+btnMic.addEventListener('click', () => conexao.enviar({ acao: 'mute' }));
+btnSom.hidden = !modoZak;
+pintarSom(true);
+const alternarSom = () => { pintarSom(!somLigado); conexao.enviar({ acao: 'zak_som', valor: somLigado }); };
+btnSom.addEventListener('click', alternarSom);
+
 const btnAjustes = document.getElementById('btn-ajustes');
 btnAjustes.innerHTML = mini.ajustes;
 btnAjustes.addEventListener('click', ajustes.abrir);
@@ -253,6 +289,7 @@ addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (document.activeElement?.matches?.('input, textarea')) return;
   if (k === 'm') conexao.enviar({ acao: 'mute' });
+  else if (k === 's' && modoZak) alternarSom();
   else if (k === 'c') alternarCamera();
   else if (k === 'f') telaCheia();
   else if (k === 'a') ajustes.abrir();

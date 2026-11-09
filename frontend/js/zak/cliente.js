@@ -82,7 +82,10 @@ export function iniciarZak({ palco, presenca, enviar, tocarAlarme, aoEstado }) {
   // ── música (rádio online) ──
   const radio = Object.assign(new Audio(), { preload: 'none', crossOrigin: 'anonymous' });
   let volume = .5, abaixada = false;
-  const aplicarVolume = () => { radio.volume = Math.max(0, Math.min(1, volume * (abaixada ? .25 : 1))); };
+  const aplicarVolume = () => {
+    radio.volume = Math.max(0, Math.min(1, volume * (abaixada ? .25 : 1)));
+    radio.muted = estado.som === false;   // botão de som: a rádio continua, mas calada
+  };
   const musicaAbaixar = v => { abaixada = v; aplicarVolume(); };
   const definirMusica = (m, vol) => {
     if (vol != null) volume = vol;
@@ -141,7 +144,8 @@ export function iniciarZak({ palco, presenca, enviar, tocarAlarme, aoEstado }) {
         break;
       case 'zak_estado':
         presenca.estado(msg.estado);
-        if (msg.estado === 'ouvindo') { presenca.ouviu(''); bip(); }
+        // continuação da conversa: sem bip (seria a cada resposta) — o orbe só fica em modo "ouvindo"
+        if (msg.estado === 'ouvindo') { if (!msg.continuar) { presenca.ouviu(''); bip(); } }
         else if (msg.ouviu) presenca.ouviu(msg.ouviu);
         else if (msg.estado === 'repouso' && !tocando) presenca.ouviu('');
         break;
@@ -167,6 +171,7 @@ export function iniciarZak({ palco, presenca, enviar, tocarAlarme, aoEstado }) {
 
   // "bip" curto e suave quando o Zak começa a prestar atenção
   const bip = () => {
+    if (estado.som === false) return;
     try {
       const c = audio(), o = c.createOscillator(), g = c.createGain();
       o.type = 'sine'; o.frequency.setValueAtTime(660, c.currentTime); o.frequency.exponentialRampToValueAtTime(990, c.currentTime + .12);

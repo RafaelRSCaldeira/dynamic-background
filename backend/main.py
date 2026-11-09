@@ -92,8 +92,13 @@ async def api_config():
         "tela": CONFIG["tela"],
         "camera": CONFIG["camera"],
         "audio": CONFIG["audio"]["ativado"],
-        "zak": CONFIG["zak"],
+        "zak": CONFIG["zak"] | {"ativado": tela_zak()},
     }
+
+
+def tela_zak() -> bool:
+    """Tela padrão: o Zak ou o painel clássico (a escolha feita em Ajustes vale mais que o config.toml)."""
+    return bool(modelos.ler().get("zak_ativado", CONFIG["zak"]["ativado"]))
 
 
 @app.get("/api/clima")
@@ -201,6 +206,11 @@ async def ws(websocket: WebSocket):
                 sala.definir_ganho(msg.get("db") or 0)
             elif acao == "isolamento" and local:
                 sala.definir_isolamento(str(msg.get("valor") or ""))
+            elif acao == "tela_zak" and local:   # Ajustes → Tela: todas as telas da sala trocam juntas
+                modelos.gravar(zak_ativado=bool(msg.get("valor")))
+                await hub.enviar({"tipo": "tela", "zak": tela_zak()})
+            elif acao == "zak_som" and local:
+                zak.definir_som(bool(msg.get("valor")))
             elif acao == "sair" and local:   # botão Sair dos Ajustes (o celular em /remote não desliga o painel)
                 asyncio.create_task(desligar())
             # ── Zak (só a própria tela) ──

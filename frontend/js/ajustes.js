@@ -6,7 +6,7 @@ import { mini } from './icones.js';
 import { GESTOS } from './brincar.js';
 import { criarRetorno } from './retorno.js';
 
-export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosidadeMin = 5 }) {
+export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosidadeMin = 5, modoZak = false }) {
   const dlg = document.createElement('dialog');
   dlg.id = 'ajustes';
   dlg.setAttribute('aria-label', 'Ajustes');
@@ -20,6 +20,14 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
       </div>
     </header>
     <div class="aj-rolagem">
+      <section class="aj-secao">
+        <div class="aj-titulo"><h3>Tela</h3></div>
+        <div class="aj-idiomas aj-dois" role="radiogroup" aria-label="Tela do painel" data-tela>
+          <button role="radio" data-valor="zak"><b>Zak</b><small>assistente de voz e cenas do assunto</small></button>
+          <button role="radio" data-valor="classico"><b>Painel clássico</b><small>cards da conversa, sem assistente</small></button>
+        </div>
+        <p class="aj-ajuda" data-tela-ajuda></p>
+      </section>
       <section class="aj-secao" data-zak-secao hidden>
         <div class="aj-titulo"><h3>Zak</h3><span class="aj-sub" data-zak-sub></span></div>
         <div class="aj-linha">
@@ -196,7 +204,28 @@ export function iniciarAjustes({ enviar, camera, alternarCamera, brincar, ociosi
       + (sala.isolamento_detalhe ? ` <em>(${esc(sala.isolamento_detalhe)})</em>` : '');
   };
 
-  const render = () => { if (!dlg.open) return; retorno.render(sala, catalogo?.microfones); renderIsolamento(); renderIdioma(); renderWhisper(); renderOllama(); renderCamera(); };
+  // Tela: Zak ou painel clássico. Vale para todas as telas e fica salvo; a página recarrega quando o servidor confirma.
+  let pedidoTela = null;
+  const renderTela = () => {
+    const atual = pedidoTela || (modoZak ? 'zak' : 'classico');
+    for (const b of dlg.querySelectorAll('[data-tela] button')) {
+      const sel = b.dataset.valor === atual;
+      b.classList.toggle('sel', sel); b.setAttribute('aria-checked', sel);
+      b.disabled = !!pedidoTela;
+    }
+    $('[data-tela-ajuda]').innerHTML = pedidoTela ? '<i class="aj-giro"></i> Trocando de tela…'
+      : modoZak ? 'O Zak atende <b>“Ei, Zak”</b> e mostra uma cena sobre o assunto da conversa. A escolha fica salva e vale para todas as telas.'
+      : 'Os cards mostram o resumo da conversa da sala; o Zak não responde. A escolha fica salva e vale para todas as telas.';
+  };
+  $('[data-tela]').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b || b.disabled) return;
+    if ((b.dataset.valor === 'zak') === modoZak) return;
+    pedidoTela = b.dataset.valor;
+    enviar({ acao: 'tela_zak', valor: pedidoTela === 'zak' });
+    renderTela();
+  });
+
+  const render = () => { if (!dlg.open) return; renderTela(); retorno.render(sala, catalogo?.microfones); renderIsolamento(); renderIdioma(); renderWhisper(); renderOllama(); renderCamera(); };
 
   // ── eventos ──────────────────────────────────────────────
   $('[data-isolamento]').addEventListener('click', e => {

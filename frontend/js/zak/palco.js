@@ -11,6 +11,50 @@ const DEPOIS_DO_ALARME_S = 40;
 const HISTORICO = 12;
 const MAX_BLOCOS = 4;
 
+// ── encaixe: nada sai da tela nem vaza do card ──────────────
+// 1) cada texto grande que não cabe na largura do seu card/coluna diminui (--f) até caber;
+// 2) se a cena inteira passa da altura disponível, ela toda diminui por igual (--k, via zoom).
+// Só o que nem assim couber é quebrado no meio da palavra (overflow-wrap no CSS).
+// números e títulos podem encolher bastante; textos corridos só até 70% (depois disso a palavra quebra)
+const ALVOS = { '.b-titulo, .b-numero, .b-comparacao, .b-clima': 0.42, '.b-fatos, .b-tempo, .b-citacao, .b-lista, .b-passos': 0.7 };
+const K_MIN = 0.45;
+const vaza = el => el.clientWidth > 0 && el.scrollWidth > el.clientWidth + 1;
+
+function encaixarLargura(cena, doZero) {
+  cena.classList.add('medindo');
+  for (const [seletor, minimo] of Object.entries(ALVOS)) {
+    for (const alvo of cena.querySelectorAll(seletor)) {
+      let f = doZero ? 1 : parseFloat(alvo.style.getPropertyValue('--f')) || 1;
+      alvo.style.setProperty('--f', f);
+      const partes = [alvo, ...alvo.querySelectorAll('*')];
+      while (f > minimo + 0.001 && partes.some(vaza)) {
+        f = Math.max(minimo, f - 0.05);
+        alvo.style.setProperty('--f', f.toFixed(2));
+      }
+    }
+  }
+  cena.classList.remove('medindo');
+}
+
+export function encaixar(cena) {
+  if (!cena?.isConnected) return;
+  cena.style.setProperty('--k', 1);
+  encaixarLargura(cena, true);
+  // a altura é medida já com a quebra de palavras normal (ela muda a altura)
+  const cs = getComputedStyle(cena);
+  const disponivel = cena.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+  const altura = () => {
+    const r = [...cena.children].map(e => e.getBoundingClientRect());
+    return Math.max(...r.map(x => x.bottom)) - Math.min(...r.map(x => x.top));
+  };
+  for (let k = 1; k > K_MIN && altura() > disponivel;) {
+    k -= 0.03;
+    cena.style.setProperty('--k', k.toFixed(2));
+  }
+  // reduzida, a cena muda de forma (um card "estreito" volta a ser "largo" e põe a comparação em colunas): confere de novo
+  encaixarLargura(cena, false);
+}
+
 const comTempo = (p, ms) => Promise.race([p, new Promise((_, n) => setTimeout(() => n(new Error('tempo')), ms))]);
 
 export class Palco {
@@ -28,6 +72,8 @@ export class Palco {
     this.$ = s => this.el.querySelector(s);
     this.historico = []; this.pos = -1; this.token = 0; this.atual = null; this.ate = 0;
     setInterval(() => this._tique(), 250);
+    let espera = 0;   // tela girada/redimensionada: encaixa de novo
+    addEventListener('resize', () => { clearTimeout(espera); espera = setTimeout(() => encaixar(this.$('.pc-cena:not(.sai)')), 200); });
   }
 
   get ativa() { return !!this.atual; }
@@ -56,6 +102,8 @@ export class Palco {
       <div class="pc-heroi">${blocoHTML(heroi, 0)}</div>
       ${resto.length ? `<div class="pc-blocos n${resto.length}">${resto.map((b, i) => blocoHTML(b, i + 1)).join('')}</div>` : ''}`;
     this._trocarConteudo(novo);
+    encaixar(novo);
+    document.fonts?.ready.then(() => { if (token === this.token) encaixar(novo); });
 
     this.$('.pc-origem').innerHTML = cena.origem === 'conversa'
       ? `${mini.pergunta}<span>${esc(cena.pergunta || 'Você perguntou')}</span>`

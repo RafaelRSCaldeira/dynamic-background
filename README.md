@@ -17,6 +17,7 @@ Ouve a sala e mostra destaques da conversa gerados **localmente** (Whisper + Oll
    ```
 2. **Dependências.** Não rode `pip install` direto no terminal: o comando `pip` desta máquina aponta para o Python global (`C:\Python314`), que já tem outras versões de `onnxruntime` e `ctranslate2`. O `iniciar.bat` cria e confere sozinho o ambiente isolado `.venv`, com as versões compatíveis de `requirements.txt` (e as libs CUDA se houver placa NVIDIA). Se ele encontrar algo faltando ou em conflito, reinstala. Para instalar manualmente, use sempre `.venv\Scripts\python -m pip install -r requirements.txt`.
 3. **Iniciar.** Dê dois cliques em `iniciar.bat`. Ele sobe o servidor e abre o Edge em modo quiosque (tela cheia).
+   Na barra de controles (aparece ao mexer o mouse): **microfone** (liga/desliga a captura de verdade, tecla `M`) e **som** (cala a voz do Zak, a música e os avisos; a legenda continua; tecla `S`), separados. Ficam vermelhos quando desligados.
    Para sair, use **Ajustes → Sair** (clique duas vezes: o segundo confirma) ou **Alt+F4**. O Sair fecha a tela cheia e desliga o servidor; pelo celular (`/remote`) não dá para desligar.
 
    Se preferir abrir manualmente, rode `.venv\Scripts\python -m backend.main` e acesse `http://localhost:8765`.
@@ -45,6 +46,7 @@ Para iniciar junto com o Windows, crie um atalho para `iniciar.bat` em `shell:st
 
 ## Ajustes (botão ⚙ ou tecla `A`)
 
+- **Tela:** escolhe entre o **Zak** (assistente de voz e cenas do assunto) e o **painel clássico** (cards da conversa, sem assistente). Todas as telas abertas recarregam na escolha nova, que fica salva e vale mais que `[zak] ativado` do `config.toml`. No painel clássico, o "Ei, Zak" não é atendido: a frase entra na conversa da sala como qualquer outra.
 - **Microfone e retorno:** escolha o microfone (pelo WASAPI, na taxa nativa do aparelho) veja o volume real em dB e ajuste o **ganho** (de −12 a +24 dB; vale para a detecção de fala, para o Whisper e para o retorno). **Ouvir ao vivo** toca o que o microfone capta (use fone de ouvido). Em **O que o Whisper ouviu**, cada uma das últimas frases pode ser ouvida exatamente como chegou à transcrição, ao lado do texto que saiu e de avisos como "muito baixo" ou "saturado". É o primeiro lugar para olhar quando a transcrição erra.
 - **Isolamento da voz** (na mesma seção, ou `[audio] isolamento`), trocado na hora:
   - **Volume:** o jeito antigo. Qualquer som bem acima do ruído de fundo vira uma frase (teclado, porta e cadeira também).
@@ -88,10 +90,11 @@ Com a câmera ligada, a mão de quem está na frente da tela vira uma **constela
 
 Em vez de acrescentar mais cards, **a tela inteira vira a cena do assunto** da conversa. Quando não há nada a mostrar, ela volta a um repouso quase vazio (hora, clima e o orbe do Zak). Tudo o que é IA roda neste computador: Whisper (ouvir), Ollama (pensar), Kokoro (falar) e, com GPU de 12 GB ou mais, Z-Image (imagens). A internet só é usada para buscar dados: fotos, Wikipédia, clima e rádio.
 
-Para usar: `[zak] ativado = true` no `config.toml`, ou abra `http://localhost:8765/?zak`.
+Para usar: **Ajustes → Tela → Zak**, ou `[zak] ativado = true` no `config.toml`, ou abra `http://localhost:8765/?zak`.
 
 **Modo ambiente (sem ninguém chamar)**
 - Assim que chega fala nova (no máximo a cada 8 s, `[zak] ambiente_segundos`), o Zak lê a conversa recente. Se der para identificar um assunto (uma viagem, um jogo, um projeto, um problema técnico), a tela se transforma na cena desse assunto: foto ou imagem gerada, cores tiradas dela e até 4 blocos de informação útil.
+- **Nada sai da tela nem vaza do card:** cada texto grande que não cabe na largura do card (número, título, valores, colunas) diminui sozinho; se a cena inteira passa da altura, ela toda diminui por igual. Cards estreitos reorganizam o conteúdo (a comparação vira lista, a linha do tempo fica em pé, e também com 5 etapas ou mais); com foto e 3 blocos, os blocos vão em duas colunas. Só uma palavra que nem assim caiba é quebrada. Testado com cenas no pior caso (4 blocos, títulos longos, 6 etapas, citação de 220 caracteres) em 1920×1080, 3840×2160, 1080×1920, 1280×1024 e 2560×1080.
 - O assunto sai das falas dos últimos ~40 s; as anteriores servem só de contexto. Por isso, quando a conversa muda de assunto, a tela muda junto, já na primeira leitura. Cada cena fica pelo menos 12 s, para não piscar. Se o assunto continua, a cada ~35 s a tela mostra outro ângulo dele (outros fatos, outra foto). Quando a conversa acaba, ela volta sozinha ao repouso.
 - Se a conversa é sobre um lugar, a cena ganha a hora local, que fica sempre certa, e o clima de lá agora (Open-Meteo).
 
@@ -103,6 +106,8 @@ Para usar: `[zak] ativado = true` no `config.toml`, ou abra `http://localhost:87
 
 **"Ei, Zak" (pedidos)**
 - Chame e faça o pedido na mesma frase: *"Ei, Zak, qual a altura do Everest?"*. Também dá para dizer só *"Ei, Zak"* e pedir na frase seguinte (ele espera 8 s, e o orbe mostra que está ouvindo). Ou digite: tecla `Z` ou clique no orbe.
+- **Conversa sem repetir "Ei, Zak":** depois de responder, ele continua ouvindo por 10 s (o orbe fica em modo "ouvindo", sem bip). A próxima frase é a continuação: *"Ei, Zak, qual a altura do Everest?"* → *"e a do K2?"* → *"quanto tempo leva pra subir?"*. Ele lembra as últimas 6 trocas por até 3 minutos. *"Valeu"*, *"obrigado"* ou *"era isso"* encerram.
+  - Escritório com gente conversando: na continuação, uma frase dirigida ao grupo (*"vocês viram…"*, *"pessoal…"*, *"alguém quer café?"*) ou que o modelo julga ser conversa entre colegas é ignorada e volta para a conversa da sala. Num teste com 11 frases, acertou 10; a que errou foi uma pergunta de assunto novo sem "Ei, Zak", que ele preferiu não responder (na dúvida, ele não se intromete).
 - O que ele faz:
   - responde perguntas (com a cena da resposta na tela; quando não tem certeza, consulta a Wikipédia antes);
   - **timer** ("coloca um timer de 10 minutos pro chá");
