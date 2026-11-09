@@ -25,11 +25,20 @@ from .config import RAIZ
 from .imagens import CACHE, LARGURA, brilho, paleta
 
 log = logging.getLogger("geracao")
+LOG_WORKER = RAIZ / "logs" / "gerador-imagens.log"   # o que o processo do modelo escreve (erros da CUDA, do diffusers...)
 PADRAO = "Tongyi-MAI/Z-Image-Turbo"
 VRAM_MIN_GB = 12
 OCIOSO_S = 10 * 60
 ESTILO = ("{p}. Cinematic wide shot, rich deep colors, soft volumetric light, dark moody background, "
           "high detail, photographic quality, no text, no letters, no watermark, no logos")
+
+
+def _fim_do_log() -> str:
+    try:
+        linhas = [l for l in LOG_WORKER.read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()]
+        return " | ".join(linhas[-3:])[-400:]
+    except OSError:
+        return ""
 
 
 def _vram_gb() -> float:
@@ -56,10 +65,19 @@ class Gerador:
         else:
             self.modelo = PADRAO if pedido == "auto" else pedido
             self.estado, self.detalhe = "pronto", self.modelo.split("/")[-1]
+        self.caminho = ""   # pasta local do modelo (o processo carrega dela, sem consultar a internet)
         self._proc: asyncio.subprocess.Process | None = None
         self._trava = asyncio.Lock()
         self._usado = 0.0
         self._vigia: asyncio.Task | None = None
+        self.ao_progresso = None   # fn(dict): a tela mostra "preparando" / "gerando · passo 3 de 9"
+
+    def _avisar(self, estado: str, passo: int = 0, total: int = 0) -> None:
+        if self.ao_progresso:
+            try:
+                self.ao_progresso({"estado": estado, "passo": passo, "total": total})
+            except Exception:  # noqa: BLE001
+                pass
 
     @property
     def disponivel(self) -> bool:
@@ -73,13 +91,23 @@ class Gerador:
             return
         self.estado, self.detalhe = "baixando", f"baixando {self.modelo.split('/')[-1]} (só na primeira vez)…"
 
-        def baixar() -> None:
+        def baixar() -> str:
             from huggingface_hub import snapshot_download
-            snapshot_download(self.modelo)
+            try:
+                return snapshot_download(self.modelo)
+            except Exception as e:  # noqa: BLE001
+                # rede do escritório sem acesso ao Hugging Face (proxy, firewall, fora do ar): se o modelo já está
+                # no disco, segue com ele — antes a geração ficava desligada a sessão inteira
+                try:
+                    caminho = snapshot_download(self.modelo, local_files_only=True)
+                except Exception:  # noqa: BLE001
+                    raise e from None
+                log.info("Imagens: sem acesso ao Hugging Face (%s); usando o modelo já baixado", str(e)[:120])
+                return caminho
 
         t0 = time.perf_counter()
         try:
-            await asyncio.to_thread(baixar)
+            self.caminho = await asyncio.to_thread(baixar)
             self.estado, self.detalhe = "pronto", self.modelo.split("/")[-1]
             log.info("Modelo de imagens %s no disco (%.0fs)", self.modelo, time.perf_counter() - t0)
         except Exception as e:  # noqa: BLE001
@@ -90,15 +118,24 @@ class Gerador:
         if self._proc and self._proc.returncode is None:
             return
         self.estado, self.detalhe = "carregando", f"carregando {self.modelo.split('/')[-1]}…"
+        self._avisar("carregando")
         log.info("Abrindo o gerador de imagens (%s)", self.modelo)
-        self._proc = await asyncio.create_subprocess_exec(
-            sys.executable, "-u", "-m", "backend.geracao_worker", self.modelo, cwd=str(RAIZ),
-            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-            limit=1 << 20)
+        LOG_WORKER.parent.mkdir(parents=True, exist_ok=True)
+        erros = open(LOG_WORKER, "ab")   # sem isso, quando o processo morre não sobra pista nenhuma
+        erros.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} {self.modelo}\n".encode())
+        erros.flush()
+        try:
+            self._proc = await asyncio.create_subprocess_exec(
+                sys.executable, "-u", "-m", "backend.geracao_worker", self.caminho or self.modelo, self.modelo, cwd=str(RAIZ),
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=erros,
+                limit=1 << 20)
+        finally:
+            erros.close()   # o processo filho já tem a cópia dele
         while True:   # o primeiro carregamento pode baixar o modelo (vários GB): sem limite de tempo aqui
             linha = await self._proc.stdout.readline()
             if not linha:
-                self.estado, self.detalhe = "erro", "o gerador fechou ao carregar"
+                self.estado, self.detalhe = "erro", f"o gerador fechou ao carregar (veja {LOG_WORKER.name})"
+                log.warning("Imagens: %s — %s", self.detalhe, _fim_do_log())
                 raise RuntimeError(self.detalhe)
             try:
                 msg = json.loads(linha)
@@ -108,6 +145,7 @@ class Gerador:
                 break
         if not msg.get("pronto"):
             self.estado, self.detalhe = "erro", msg.get("erro", "falhou")
+            log.warning("Imagens: o modelo não carregou: %s", self.detalhe)
             raise RuntimeError(self.detalhe)
         self.estado = "pronto"
         self.detalhe = f"{self.modelo.split('/')[-1]} · {'GPU' if msg['modo'] == 'gpu' else 'GPU + RAM'}"
@@ -133,11 +171,13 @@ class Gerador:
         if self.estado != "erro" and self.modelo:
             self.estado, self.detalhe = "pronto", self.modelo.split("/")[-1]
 
-    async def gerar(self, descricao: str) -> dict | None:
+    async def gerar(self, descricao: str, semente: int | None = None) -> dict | None:
+        """semente: outra variação da mesma descrição (a galeria de imagens geradas pede várias)."""
         descricao = " ".join(descricao.split())[:300]
         if not descricao or not self.disponivel or self.estado == "baixando":
             return None   # enquanto o modelo baixa, as cenas ficam com a foto ou o fundo animado
-        chave = hashlib.sha1(f"gerar|{self.modelo}|{descricao.lower()}".encode()).hexdigest()[:16]
+        variacao = f"|{semente}" if semente else ""
+        chave = hashlib.sha1(f"gerar|{self.modelo}|{descricao.lower()}{variacao}".encode()).hexdigest()[:16]
         meta_arq = CACHE / f"{chave}.json"
         if meta_arq.exists():
             meta = json.loads(meta_arq.read_text(encoding="utf-8"))
@@ -145,20 +185,41 @@ class Gerador:
                 return meta
         async with self._trava:
             self._usado = time.time()
-            await self._abrir()
+            try:
+                await self._abrir()
+            except Exception:
+                self._avisar("erro")
+                raise
             CACHE.mkdir(parents=True, exist_ok=True)
             bruta = CACHE / f"{chave}.png"
             self.estado = "gerando"
+            self._avisar("gerando")
             t0 = time.perf_counter()
             self._proc.stdin.write((json.dumps({"prompt": ESTILO.format(p=descricao), "largura": 0, "altura": 0,
                                                 "saida": str(bruta), "semente": int(chave[:6], 16)}) + "\n").encode())
             await self._proc.stdin.drain()
-            linha = await asyncio.wait_for(self._proc.stdout.readline(), 600)
+            limite = time.time() + 600
+            resp: dict = {}
+            while True:   # avisos de progresso ("passo") até a resposta final ("ok")
+                try:
+                    linha = await asyncio.wait_for(self._proc.stdout.readline(), max(1, limite - time.time()))
+                except asyncio.TimeoutError:
+                    linha = b""
+                if not linha:
+                    break
+                try:
+                    resp = json.loads(linha)
+                except json.JSONDecodeError:
+                    continue
+                if "ok" in resp:
+                    break
+                if "passo" in resp:
+                    self._avisar("gerando", int(resp["passo"]), int(resp.get("total") or 0))
             self._usado = time.time()
             self.estado = "pronto"
-            resp = json.loads(linha or b"{}")
+            self._avisar("pronto" if resp.get("ok") else "erro")
             if not resp.get("ok"):
-                log.warning("geração falhou: %s", resp.get("erro"))
+                log.warning("geração falhou: %s", resp.get("erro") or f"o gerador parou de responder — {_fim_do_log()}")
                 if not linha:
                     self.fechar()
                 return None

@@ -54,6 +54,48 @@ const BLOCOS = {
     </div>`;
   },
 
+  // ── telas de resposta longa (formato "painel") ──
+  // carrossel: cards que passam sozinhos (o palco anda com eles); a foto de cada card chega depois
+  carrossel: b => {
+    const lista = itens(b.itens, 8);
+    const card = (i, k) => `
+      <article class="cr-card${i.foto ? ' com-foto' : ''}" style="--c:${k}">
+        ${i.foto ? `<div class="cr-foto" data-foto="${esc(i.foto)}" aria-hidden="true"></div>` : ''}
+        <div class="cr-corpo">
+          ${i.valor ? `<b class="cr-valor">${txt(i.valor, 24)}</b>` : ''}
+          <h4>${txt(i.titulo || i.rotulo, 40)}</h4>
+          ${i.texto ? `<p>${txt(i.texto, 170)}</p>` : ''}
+        </div>
+      </article>`;
+    return `${rotulo(b.titulo)}
+    <div class="b-carrossel" data-n="${lista.length}" style="--n:${lista.length}">
+      <div class="cr-janela"><div class="cr-trilho">${lista.map(card).join('')}</div></div>
+      <div class="cr-pontos" aria-hidden="true">${lista.map(() => '<i></i>').join('')}</div>
+    </div>`;
+  },
+
+  tabela: b => {
+    const cols = (b.colunas || []).slice(0, 4), linhas = itens(b.linhas, 7);
+    return `${rotulo(b.titulo)}
+    <table class="b-tabela">
+      ${cols.some(Boolean) ? `<thead><tr>${cols.map(c => `<th scope="col">${txt(c, 30)}</th>`).join('')}</tr></thead>` : ''}
+      <tbody>${linhas.map(l => `<tr>${l.slice(0, 4).map((c, i) => i === 0 ? `<th scope="row">${txt(c, 40)}</th>` : `<td>${txt(c, 40)}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table>`;
+  },
+
+  texto: b => `${rotulo(b.titulo)}
+    <div class="b-texto">${itens(b.paragrafos, 3).map(p => `<p>${txt(p, 360)}</p>`).join('')}</div>`,
+
+  barras: b => {
+    const lista = itens(b.itens, 8);
+    const max = Math.max(...lista.map(i => +i.numero || 0)) || 1;
+    return `${rotulo(b.titulo)}
+    <ul class="b-barras">${lista.map((i, k) => `
+      <li style="--v:${Math.max(.015, (+i.numero || 0) / max).toFixed(3)};--c:${k}">
+        <span>${txt(i.rotulo, 30)}</span><i><em></em></i><b>${txt(i.valor, 24)}</b>
+      </li>`).join('')}</ul>`;
+  },
+
   // contagem regressiva (alarme/lembrete): o anel e o tempo são atualizados pelo palco
   contagem: b => {
     const ate = b.ate ?? Date.now() + (+b.segundos || 0) * 1000;
@@ -68,10 +110,10 @@ const BLOCOS = {
 
 export const TIPOS = Object.keys(BLOCOS);
 
-export function blocoHTML(b, i) {
+export function blocoHTML(b, i, largo = false) {
   const f = BLOCOS[b?.tipo];
   if (!f) return '';
-  return `<section class="bloco tipo-${b.tipo}" style="--i:${i}">${f(b)}</section>`;
+  return `<section class="bloco tipo-${b.tipo}${largo ? ' largo' : ''}" style="--i:${i}">${f(b)}</section>`;
 }
 
 /** Atualiza contagens regressivas; devolve true se alguma acabou agora. */
@@ -88,3 +130,6 @@ export function tiqueContagens(raiz) {
   return acabou;
 }
 
+
+/** No painel (resposta longa), estes blocos ocupam a largura inteira; os outros vão em duas colunas. */
+export const LARGOS = new Set(['carrossel', 'tabela', 'texto', 'linha_tempo']);

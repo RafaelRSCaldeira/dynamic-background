@@ -284,3 +284,129 @@ body:not(.cursor-oculto) #zak-demo, #zak-demo.pausado { opacity: 1; }
 .zx-eq i:nth-child(2) { animation-delay: -.4s; } .zx-eq i:nth-child(3) { animation-delay: -.7s; }
 @keyframes eq { 0%, 100% { height: 30%; } 50% { height: 100%; } }
 body.zak:not(.em-cena) #zak-extras { bottom: 4.6vh; }
+
+/* ── Painel: resposta longa, com quantas seções forem necessárias ─────────── */
+.pc-cena.layout-painel { grid-template-columns: minmax(0, 1fr); align-content: safe center; gap: 3.2vh; padding: 10.5vh 5vw 13vh; }
+.layout-painel > .pc-heroi { zoom: calc(var(--k, 1) * .62); max-width: 75%; }
+.layout-painel > .pc-heroi .b-sub { max-width: 46ch; font-size: 2.3rem; }
+.layout-painel .pc-blocos { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.6rem; }
+.layout-painel .pc-blocos .bloco.largo { grid-column: 1 / -1; }
+.layout-painel .b-fatos dd { font-size: calc(1.9rem * var(--f, 1)); }
+/* a tela que não cabe nem reduzida desce devagar até o fim e volta */
+.layout-painel.rolar { align-content: start;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 9vh, #000 90vh, transparent);
+  mask-image: linear-gradient(180deg, transparent 0, #000 9vh, #000 90vh, transparent); }
+.layout-painel.rolar > * { animation: rolar var(--rolar-s, 30s) ease-in-out 4s infinite alternate; }
+@keyframes rolar { 0%, 12% { transform: translateY(0); } 88%, 100% { transform: translateY(var(--rolar, 0)); } }
+/* foto do painel: um fundo atrás do título, que some antes das seções */
+body[data-layout="painel"] .pc-foto { -webkit-mask-image: linear-gradient(180deg, #000 0%, rgba(0, 0, 0, .55) 32%, transparent 62%);
+  mask-image: linear-gradient(180deg, #000 0%, rgba(0, 0, 0, .55) 32%, transparent 62%); }
+body[data-layout="painel"] .pc-foto-v { -webkit-mask-image: linear-gradient(90deg, rgba(0, 0, 0, .35), #000 55%); mask-image: linear-gradient(90deg, rgba(0, 0, 0, .35), #000 55%); }
+body[data-layout="painel"] .pc-foto::after { opacity: max(.25, var(--escurecer, 0)); }
+body[data-layout="painel"] .pc-veu { opacity: 1; }
+
+/* carrossel: os cards passam sozinhos (palco.js muda --pos) */
+.b-carrossel { --vis: 4; --g: 1.3rem; --pos: 0; }
+@container (max-width: 88rem) { .b-carrossel { --vis: 3; } }
+@container (max-width: 62rem) { .b-carrossel { --vis: 2; } }
+@container (max-width: 34rem) { .b-carrossel { --vis: 1; } }
+.cr-janela { overflow: hidden; }
+.cr-trilho { display: flex; gap: var(--g);
+  transform: translateX(calc(var(--pos) * -1 * (100% + var(--g)) / min(var(--vis), var(--n))));
+  transition: transform 1.3s var(--ease); }
+.cr-card { flex: 0 0 calc((100% - (min(var(--vis), var(--n)) - 1) * var(--g)) / min(var(--vis), var(--n)));
+  display: flex; flex-direction: column; overflow: hidden; border-radius: calc(var(--raio) * .8);
+  background: linear-gradient(160deg, rgba(255, 255, 255, .075), rgba(255, 255, 255, .015));
+  border: 1px solid rgba(255, 255, 255, .09); }
+.cr-foto { height: 9.5rem; flex: none; position: relative; opacity: .55; transition: opacity 1.4s;
+  background: radial-gradient(120% 140% at 20% 0%, color-mix(in srgb, var(--acento) 28%, transparent), transparent 70%), rgba(255, 255, 255, .03);
+  background-size: cover; background-position: center; }
+.cr-foto.ok { opacity: 1; }
+.cr-foto::after { content: ""; position: absolute; inset: 0; background: linear-gradient(0deg, rgba(6, 8, 18, .55), transparent 55%); }
+.cr-corpo { padding: 1.1rem 1.3rem 1.3rem; display: flex; flex-direction: column; gap: .45rem; }
+.cr-valor { font-size: calc(1.05rem * var(--f, 1)); font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--acento); }
+.cr-corpo h4 { margin: 0; font-size: calc(1.75rem * var(--f, 1)); font-weight: 300; letter-spacing: -.02em; line-height: 1.1; }
+.cr-corpo p { margin: 0; font-size: calc(1.08rem * var(--f, 1)); line-height: 1.38; color: var(--texto-2); }
+.cr-pontos { display: flex; gap: .45rem; margin-top: 1rem; }
+.cr-pontos i { width: .45rem; height: .45rem; border-radius: 99px; background: rgba(255, 255, 255, .18); transition: width .6s var(--ease), background .6s; }
+.cr-pontos i.on { width: 1.4rem; background: var(--acento); }
+
+/* tabela */
+.b-tabela { width: 100%; border-collapse: collapse; font-size: calc(1.3rem * var(--f, 1)); }
+.b-tabela th, .b-tabela td { padding: .7rem 1rem; text-align: left; vertical-align: top; }
+.b-tabela thead th { font-size: .74em; font-weight: 600; letter-spacing: .15em; text-transform: uppercase; color: var(--texto-3);
+  border-bottom: 1px solid rgba(255, 255, 255, .14); }
+.b-tabela tbody tr + tr > * { border-top: 1px solid rgba(255, 255, 255, .06); }
+.b-tabela tbody th { font-weight: 500; color: var(--acento); }
+.b-tabela td { font-weight: 300; }
+
+/* texto corrido: em colunas quando o card é largo */
+.b-texto { columns: 2 30rem; column-gap: 2.6rem; }
+.b-texto p { margin: 0 0 .9rem; font-size: calc(1.3rem * var(--f, 1)); line-height: 1.5; font-weight: 300; color: var(--texto-2); break-inside: avoid; }
+.b-texto p:first-child { color: var(--texto); }
+
+/* barras: um número comparado entre vários itens */
+.b-barras { list-style: none; margin: 0; padding: 0; display: grid; gap: .85rem; }
+.b-barras li { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) auto; align-items: center; gap: 1rem; font-size: calc(1.15rem * var(--f, 1)); }
+.b-barras span { color: var(--texto-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.b-barras i { height: .7rem; border-radius: 99px; background: rgba(255, 255, 255, .06); overflow: hidden; }
+.b-barras em { display: block; height: 100%; width: calc(var(--v) * 100%); border-radius: inherit;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--acento) 55%, transparent), var(--acento));
+  box-shadow: 0 0 1rem color-mix(in srgb, var(--acento) 45%, transparent);
+  animation: barra 1.6s var(--ease) backwards; animation-delay: calc(var(--c, 0) * 90ms + 600ms); transform-origin: left; }
+@keyframes barra { from { transform: scaleX(0); } }
+.b-barras b { font-weight: 400; font-variant-numeric: tabular-nums; }
+
+/* ── Galeria: só as imagens, em tela cheia ───────────────── */
+body[data-layout="galeria"] .pc-foto, body[data-layout="galeria"] .pc-foto-v { -webkit-mask-image: none; mask-image: none; }
+body[data-layout="galeria"] .pc-foto { transition-duration: 2.8s; }
+body[data-layout="galeria"] .pc-foto::after { opacity: 0; }
+body[data-layout="galeria"] .pc-foto img { object-position: 50% 50%; animation-duration: 26s; transform-origin: 50% 50%; }
+.pc-foto.galeria.g1 img { animation-name: kenburns-1; } .pc-foto.galeria.g2 img { animation-name: kenburns-2; } .pc-foto.galeria.g3 img { animation-name: kenburns-3; }
+@keyframes kenburns-1 { from { transform: scale(1.02); } to { transform: scale(1.12) translateX(-1.5%); } }
+@keyframes kenburns-2 { from { transform: scale(1.12) translateY(1.2%); } to { transform: scale(1.03); } }
+@keyframes kenburns-3 { from { transform: scale(1.04) translateX(-1%); } to { transform: scale(1.13) translateX(1%); } }
+body[data-layout="galeria"] .pc-topo, body[data-layout="galeria"] .pc-veu { opacity: 0; }
+/* o orbe do Zak some enquanto ele só escuta; volta quando alguém fala com ele */
+#zak { transition: background .8s, border-color .8s, padding 1s var(--ease), opacity .8s; }
+body[data-layout="galeria"] #zak[data-estado="repouso"]:not(:has(.visivel)) { opacity: 0; }
+.pc-aviso { position: absolute; left: 50%; top: 50%; margin: 0; transform: translate(-50%, -50%); padding: .7rem 1.4rem; border-radius: 99px;
+  font-size: 1.15rem; font-weight: 300; letter-spacing: .04em; color: var(--texto-2); background: rgba(8, 10, 20, .35);
+  border: 1px solid rgba(255, 255, 255, .08); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  opacity: 0; transition: opacity .8s; }
+.pc-aviso.visivel { opacity: 1; animation: aviso-pulsa 2.4s ease-in-out infinite; }
+@keyframes aviso-pulsa { 50% { color: var(--texto); } }
+
+/* telas verticais: o painel vira uma coluna só */
+@media (max-aspect-ratio: 1/1) {
+  .layout-painel .pc-blocos { grid-template-columns: minmax(0, 1fr); }
+  .layout-painel > .pc-heroi { max-width: none; }
+}
+
+/* ── Status da geração de imagem: no centro (nada na tela ainda) ou pílula no canto ── */
+.pc-gerando { position: absolute; display: flex; align-items: center; gap: 1rem; opacity: 0; pointer-events: none;
+  background: rgba(8, 10, 20, .45); border: 1px solid rgba(255, 255, 255, .09);
+  backdrop-filter: blur(18px) saturate(140%); -webkit-backdrop-filter: blur(18px) saturate(140%);
+  box-shadow: 0 1.6rem 3.2rem -1.8rem rgba(0, 0, 0, .7); transition: opacity .8s, transform .8s var(--ease); }
+.pc-gerando.visivel { opacity: 1; }
+.pc-gerando.centro { left: 50%; top: 50%; transform: translate(-50%, -46%); flex-direction: column; text-align: center;
+  min-width: 24rem; padding: 2.4rem 2.8rem 2.1rem; border-radius: var(--raio); gap: 1.4rem; }
+.pc-gerando.centro.visivel { transform: translate(-50%, -50%); }
+.pc-gerando.canto { right: 1.4rem; bottom: 2.4rem; padding: .55rem 1.25rem .55rem .7rem; border-radius: 99px; transform: translateY(.6rem); }
+.pc-gerando.canto.visivel { transform: none; }
+.pg-anel { width: 2.1rem; height: 2.1rem; flex: none; transform: rotate(-90deg); overflow: visible; }
+.centro .pg-anel { width: 5rem; height: 5rem; }
+.pg-anel circle { fill: none; stroke-width: 3.6; }
+.centro .pg-anel circle { stroke-width: 2.4; }
+.pg-trilho { stroke: rgba(255, 255, 255, .14); }
+.pg-arco { stroke: color-mix(in srgb, var(--acento) 55%, #fff); stroke-linecap: round; stroke-dasharray: 100px; stroke-dashoffset: calc(100px - var(--prog, 0) * 100px);
+  filter: drop-shadow(0 0 .35rem var(--acento)); transition: stroke-dashoffset .6s var(--ease); }
+.pc-gerando.indeterminado .pg-arco { stroke-dashoffset: 72px; }
+.pc-gerando.indeterminado .pg-anel { animation: pg-gira 1.4s linear infinite; }
+@keyframes pg-gira { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
+.pg-texto { display: flex; flex-direction: column; gap: .3rem; min-width: 0; }
+.pg-titulo { font-size: 1rem; font-weight: 400; color: var(--texto); white-space: nowrap; }
+.centro .pg-titulo { font-size: 1.65rem; font-weight: 300; letter-spacing: -.01em; white-space: normal; }
+.pg-detalhe { font-size: .8rem; color: var(--texto-3); font-variant-numeric: tabular-nums; }
+.centro .pg-detalhe { font-size: 1.05rem; }
+.pg-detalhe:empty { display: none; }

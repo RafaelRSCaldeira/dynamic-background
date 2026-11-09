@@ -18,7 +18,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -126,21 +126,48 @@ async def api_noticias():
 
 
 @app.get("/api/imagem")
-async def api_imagem(q: str):
+async def api_imagem(q: str, estrito: bool = False):
     """Melhor foto (4K, filtrada) para o assunto de uma cena do Zak, com paleta e crédito."""
-    meta = await _proteger(imagens.buscar(app.state.http, q))
+    meta = await _proteger(imagens.buscar(app.state.http, q, estrito))
     if not meta:
         raise HTTPException(404, "Nenhuma imagem boa o bastante")
     return meta
 
 
+@app.get("/api/imagem/card")
+async def api_imagem_card(q: str):
+    """Foto pequena de um item de carrossel (Wikipédia primeiro, que acerta o item certo)."""
+    meta = await _proteger(imagens.card(app.state.http, q))
+    if not meta:
+        raise HTTPException(404, "Sem foto para esse item")
+    return meta
+
+
+@app.get("/api/imagem/galeria")
+async def api_imagem_galeria(q: list[str] = Query(...)):
+    """Várias fotos de um tema (um termo por q), para a tela que só passa imagens."""
+    itens = await _proteger(imagens.galeria(app.state.http, q))
+    if not itens:
+        raise HTTPException(404, "Nenhuma foto boa o bastante")
+    return {"itens": itens}
+
+
+@app.get("/api/imagem/item/{ident}")
+async def api_imagem_item(ident: str):
+    meta = await _proteger(imagens.item(app.state.http, ident))
+    if not meta:
+        raise HTTPException(404)
+    return meta
+
+
 @app.get("/api/imagem/gerar")
-async def api_imagem_gerar(p: str):
-    """Imagem gerada localmente (ideias e atmosferas sem foto real). Pode levar alguns segundos."""
+async def api_imagem_gerar(p: str, s: int | None = None):
+    """Imagem gerada localmente (ideias e atmosferas sem foto real). Pode levar alguns segundos.
+    s: semente (a galeria pede variações da mesma descrição)."""
     if not zak.gerador.disponivel:
         raise HTTPException(404, f"Geração de imagens indisponível: {zak.gerador.detalhe}")
     try:
-        meta = await zak.gerador.gerar(p)
+        meta = await zak.gerador.gerar(p, s)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Falha ao gerar: {e}") from e
     finally:
@@ -152,7 +179,7 @@ async def api_imagem_gerar(p: str):
 
 @app.get("/api/imagem/arquivo/{nome}")
 async def api_imagem_arquivo(nome: str):
-    caminho = imagens.arquivo(nome)
+    caminho = await asyncio.to_thread(imagens.arquivo, nome)
     if not caminho:
         raise HTTPException(404)
     return FileResponse(caminho, media_type="image/jpeg", headers={"Cache-Control": "public, max-age=604800, immutable"})

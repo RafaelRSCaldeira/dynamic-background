@@ -163,6 +163,7 @@ export function iniciarZak({ palco, presenca, enviar, tocarAlarme, aoEstado }) {
       case 'zak_calar': calar(); break;
       case 'zak_musica': estado.musica = msg.musica; definirMusica(msg.musica, msg.volume); break;
       case 'zak_alarme': tocarAlarme(); break;
+      case 'zak_imagem': palco.progressoImagem(msg); break;
       default: return false;
     }
     if (['zak', 'zak_musica'].includes(msg.tipo)) renderExtras();

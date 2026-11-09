@@ -5,11 +5,13 @@ e quando o processo fecha (depois de um tempo parado) a VRAM volta inteira para 
 
 Protocolo (uma linha JSON por mensagem):
   entrada: {"prompt": str, "largura": int, "altura": int, "saida": caminho.png, "semente": int}
-  saída:   {"ok": true, "ms": int} | {"ok": false, "erro": str}
+  saída:   {"passo": int, "total": int} a cada passo da difusão (para a tela mostrar o progresso), e no fim
+           {"ok": true, "ms": int} | {"ok": false, "erro": str}
 A primeira linha de saída é {"pronto": true, "modelo": ..., "modo": ...} quando o modelo carregou.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import sys
@@ -46,7 +48,10 @@ def tamanho(modelo: str, vram_gb: float) -> tuple[int, int]:
 
 
 def main() -> None:
-    modelo = sys.argv[1]
+    modelo = sys.argv[1]                                    # pasta local do modelo (ou o id do Hugging Face)
+    nome = sys.argv[2] if len(sys.argv) > 2 else modelo     # o id, para escolher passos e resolução
+    if os.path.isdir(modelo):
+        os.environ["HF_HUB_OFFLINE"] = "1"                  # já está tudo no disco: nada de esperar a rede
     import torch
     from diffusers import DiffusionPipeline
 
@@ -55,24 +60,31 @@ def main() -> None:
         return
     total = torch.cuda.get_device_properties(0).total_memory / 2**30
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-    if "sd-turbo" in modelo.lower() or "sdxl-turbo" in modelo.lower():
+    if "sd-turbo" in nome.lower() or "sdxl-turbo" in nome.lower():
         dtype = torch.float16
     t0 = time.perf_counter()
     pipe = DiffusionPipeline.from_pretrained(modelo, torch_dtype=dtype)
     livre = torch.cuda.mem_get_info()[0] / 2**30
-    # com folga, tudo na GPU; senão cada parte do modelo sobe para a GPU só na hora de usar (o resto fica na RAM)
+    # com muita folga, tudo na GPU; senão cada parte do modelo sobe para a GPU só na hora de usar (o resto fica na RAM).
+    # A folga é grande de propósito: o Whisper e o Ollama dividem a placa e podem crescer depois (antes, "cabia por
+    # pouco", ia tudo para a GPU e a geração estourava a memória no meio). Com PCIe 4/5 a troca custa ~1 s por imagem.
     modo = "gpu"
     peso = sum(p.numel() * p.element_size() for c in pipe.components.values() if isinstance(c, torch.nn.Module) for p in c.parameters()) / 2**30
-    if peso + 3 > livre:
+    if peso + 8 > livre:
         pipe.enable_model_cpu_offload()
         modo = "offload"
     else:
         pipe.to("cuda")
     pipe.set_progress_bar_config(disable=True)
-    responder({"pronto": True, "modelo": modelo, "modo": modo, "vram_gb": round(total, 1),
+    responder({"pronto": True, "modelo": nome, "modo": modo, "vram_gb": round(total, 1), "livre_gb": round(livre, 1),
                "tamanho_gb": round(peso, 1), "s": round(time.perf_counter() - t0, 1)})
 
-    extra = parametros(modelo)
+    extra = parametros(nome)
+    passos = extra["num_inference_steps"]
+
+    def progresso(_pipe, i, _t, kwargs):
+        responder({"passo": i + 1, "total": passos})
+        return kwargs
     for linha in sys.stdin:
         try:
             pedido = json.loads(linha)
@@ -83,13 +95,25 @@ def main() -> None:
             gerador = torch.Generator("cuda").manual_seed(int(pedido.get("semente", 0)))
             largura, altura = int(pedido.get("largura") or 0), int(pedido.get("altura") or 0)
             if not largura or not altura:
-                largura, altura = tamanho(modelo, total)
+                largura, altura = tamanho(nome, total)
             kwargs = dict(prompt=pedido["prompt"], width=largura, height=altura, generator=gerador, **extra)
+            responder({"passo": 0, "total": passos})
+            if "callback_on_step_end" in inspect.signature(pipe.__call__).parameters:
+                kwargs["callback_on_step_end"] = progresso
             try:
                 img = pipe(**kwargs).images[0]
             except torch.OutOfMemoryError:
                 torch.cuda.empty_cache()
-                pipe.enable_sequential_cpu_offload()     # último recurso: lento, mas cabe
+                if modo == "gpu":                        # a placa encheu depois (Ollama/Whisper): passa a revezar as partes
+                    pipe.to("cpu")
+                    pipe.enable_model_cpu_offload()
+                    modo = "offload"
+                else:
+                    pipe.enable_sequential_cpu_offload()     # último recurso: lento, mas cabe
+                    modo = "sequencial"
+                torch.cuda.empty_cache()
+                gerador = torch.Generator("cuda").manual_seed(int(pedido.get("semente", 0)))
+                kwargs["generator"] = gerador
                 img = pipe(**kwargs).images[0]
             img.save(pedido["saida"])
             responder({"ok": True, "ms": round((time.perf_counter() - t0) * 1000)})

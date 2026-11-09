@@ -250,12 +250,14 @@ async def _baixar(http: httpx.AsyncClient, url: str) -> Image.Image:
     return img
 
 
-async def buscar(http: httpx.AsyncClient, consulta: str) -> dict | None:
-    """Melhor imagem para a consulta, já no cache local. None se nada for bonito o bastante."""
+async def buscar(http: httpx.AsyncClient, consulta: str, estrito: bool = False) -> dict | None:
+    """Melhor imagem para a consulta, já no cache local. None se nada for bonito o bastante.
+    estrito: o título da foto precisa ter TODAS as palavras da consulta (cards dos carrosséis: "planet Mercury"
+    trazia um carro Mercury; sem foto o card fica com um degradê, o que é melhor que uma foto errada)."""
     consulta = consulta.strip()[:120]
     if not consulta:
         return None
-    chave = _chave(consulta)
+    chave = _chave(("estrito|" if estrito else "") + consulta)
     CACHE.mkdir(parents=True, exist_ok=True)
     meta_arq = CACHE / f"{chave}.json"
     async with _travas.setdefault(chave, asyncio.Lock()):
@@ -269,47 +271,182 @@ async def buscar(http: httpx.AsyncClient, consulta: str) -> dict | None:
                 return None
 
         t0 = time.perf_counter()
-        candidatos = (await _candidatos(http, consulta))[:10]
-        notas = []
-        miniaturas = await asyncio.gather(*(_baixar(http, c["miniatura"]) for c in candidatos), return_exceptions=True)
-        for c, mini in zip(candidatos, miniaturas):
-            if isinstance(mini, Exception):
-                continue
-            nota, motivos = avaliar(mini)
-            if motivos:
-                log.debug("descartada %s: %s", c["titulo"], ", ".join(motivos))
-                continue
-            notas.append((nota + c["relevancia"] * 1.5 + (0.3 if c["curada"] else 0), c))
+        notas, n = await _aprovadas(http, consulta, 10, estrito)
         if not notas:
             meta_arq.write_text(json.dumps({"consulta": consulta, "t": time.time()}), encoding="utf-8")
-            log.info("sem imagem boa para %r (%d candidatas)", consulta, len(candidatos))
+            log.info("sem imagem boa para %r (%d candidatas)", consulta, n)
             return None
-
-        _, melhor = max(notas, key=lambda n: n[0])
-        url = melhor["original"]
-        if melhor["w"] > LARGURA and re.search(r"/\d+px-", melhor["miniatura"] or ""):   # Commons: miniatura em 4K
-            url = re.sub(r"/\d+px-", f"/{LARGURA}px-", melhor["miniatura"])
-        img = await _baixar(http, url)
-        img = img.convert("RGB")
-        if img.width > LARGURA:
-            img = img.resize((LARGURA, round(LARGURA * img.height / img.width)), Image.LANCZOS)
-        arquivo = f"{chave}.jpg"
-        await asyncio.to_thread(img.save, CACHE / arquivo, "JPEG", quality=88, optimize=True, progressive=True)
-        meta = {
-            "consulta": consulta, "t": time.time(), "arquivo": arquivo,
-            "url": f"/api/imagem/arquivo/{arquivo}", "w": img.width, "h": img.height,
-            "paleta": paleta(img), "brilho": brilho(img), "titulo": melhor["titulo"].removeprefix("File:").rsplit(".", 1)[0],
-            "autor": melhor["autor"], "licenca": melhor["licenca"], "pagina": melhor["pagina"],
-            "fonte": melhor.get("fonte", "Wikimedia Commons"),
-        }
+        meta = await _salvar(http, notas[0][1], chave, consulta)
         meta_arq.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
         log.info("imagem para %r: %s (%.1fs, %d/%d aprovadas)", consulta, meta["titulo"][:60],
-                 time.perf_counter() - t0, len(notas), len(candidatos))
+                 time.perf_counter() - t0, len(notas), n)
+        return meta
+
+
+async def _aprovadas(http: httpx.AsyncClient, consulta: str, maximo: int,
+                     estrito: bool = False) -> tuple[list[tuple[float, dict]], int]:
+    """Candidatas do assunto que passam no filtro de beleza, da melhor para a pior (e quantas foram avaliadas)."""
+    candidatos = await _candidatos(http, consulta)
+    if estrito:
+        candidatos = [c for c in candidatos if c["relevancia"] >= 0.999]
+    candidatos = candidatos[:maximo]
+    notas = []
+    miniaturas = await asyncio.gather(*(_baixar(http, c["miniatura"]) for c in candidatos), return_exceptions=True)
+    for c, mini in zip(candidatos, miniaturas):
+        if isinstance(mini, Exception):
+            continue
+        nota, motivos = avaliar(mini)
+        if motivos:
+            log.debug("descartada %s: %s", c["titulo"], ", ".join(motivos))
+            continue
+        notas.append((nota + c["relevancia"] * 1.5 + (0.3 if c["curada"] else 0), c))
+    notas.sort(key=lambda n: -n[0])
+    return notas, len(candidatos)
+
+
+async def _salvar(http: httpx.AsyncClient, c: dict, chave: str, consulta: str) -> dict:
+    """Baixa a foto escolhida em 4K para o cache e devolve os dados dela (url local, paleta, crédito)."""
+    url = c["original"]
+    if c["w"] > LARGURA and re.search(r"/\d+px-", c["miniatura"] or ""):   # Commons: miniatura em 4K
+        url = re.sub(r"/\d+px-", f"/{LARGURA}px-", c["miniatura"])
+    img = await _baixar(http, url)
+    img = img.convert("RGB")
+    if img.width > LARGURA:
+        img = img.resize((LARGURA, round(LARGURA * img.height / img.width)), Image.LANCZOS)
+    arquivo = f"{chave}.jpg"
+    await asyncio.to_thread(img.save, CACHE / arquivo, "JPEG", quality=88, optimize=True, progressive=True)
+    return {
+        "consulta": consulta, "t": time.time(), "arquivo": arquivo,
+        "url": f"/api/imagem/arquivo/{arquivo}", "w": img.width, "h": img.height,
+        "paleta": paleta(img), "brilho": brilho(img), "titulo": c["titulo"].removeprefix("File:").rsplit(".", 1)[0],
+        "autor": c["autor"], "licenca": c["licenca"], "pagina": c["pagina"],
+        "fonte": c.get("fonte", "Wikimedia Commons"),
+    }
+
+
+# ── foto de um card (item de um carrossel) ─────────────────
+WIKIPEDIA_EN = "https://en.wikipedia.org/w/api.php"
+
+
+async def card(http: httpx.AsyncClient, termo: str) -> dict | None:
+    """Foto de um item com nome (planeta, monumento, cidade, bicho, obra): a imagem principal do artigo da
+    Wikipédia é a mais certeira ("planet Mercury" → artigo "Mercury (planet)" → o planeta, e não um carro Mercury).
+    Sem artigo com foto livre, tenta a busca normal exigindo todas as palavras no título."""
+    termo = termo.strip()[:80]
+    if not termo:
+        return None
+    chave = _chave("card|" + termo)
+    meta_arq = CACHE / f"{chave}.json"
+    CACHE.mkdir(parents=True, exist_ok=True)
+    async with _travas.setdefault(chave, asyncio.Lock()):
+        if meta_arq.exists():
+            meta = json.loads(meta_arq.read_text(encoding="utf-8"))
+            if meta.get("arquivo") and (CACHE / meta["arquivo"]).exists():
+                return meta
+            if not meta.get("arquivo") and time.time() - meta.get("t", 0) < SEM_RESULTADO_S:
+                return None
+        meta = None
+        try:
+            r = await http.get(WIKIPEDIA_EN, headers=UA, timeout=12, params={
+                "action": "query", "format": "json", "formatversion": 2, "generator": "search", "gsrsearch": termo,
+                "gsrlimit": 3, "prop": "pageimages", "piprop": "thumbnail|name", "pithumbsize": 1280, "pilicense": "free"})
+            r.raise_for_status()
+            # o artigo mais relevante que tem foto (o primeiro da busca às vezes é uma lista, sem imagem)
+            paginas = sorted(r.json().get("query", {}).get("pages") or [], key=lambda p: p.get("index", 9))
+            pagina = next((p for i, p in enumerate(paginas) if p.get("thumbnail")
+                           and (i == 0 or relevancia(termo, p.get("title", "")) >= 0.999)), {})
+            miniatura = (pagina.get("thumbnail") or {}).get("source")
+            nome = pagina.get("pageimage") or ""
+            if miniatura and not RUINS.search(nome) and not nome.lower().endswith((".svg", ".gif")):
+                img = (await _baixar(http, miniatura)).convert("RGB")
+                _, motivos = avaliar(img)
+                # num card, foto de planeta no espaço preto é bonita ("escura"/"chapada"); fundo branco não
+                if "fundo branco" not in motivos and "clara demais" not in motivos and img.width >= 480:
+                    arquivo = f"{chave}.jpg"
+                    await asyncio.to_thread(img.save, CACHE / arquivo, "JPEG", quality=86, optimize=True, progressive=True)
+                    meta = {"consulta": termo, "t": time.time(), "arquivo": arquivo, "url": f"/api/imagem/arquivo/{arquivo}",
+                            "w": img.width, "h": img.height, "titulo": pagina.get("title", ""), "autor": "",
+                            "licenca": "livre", "fonte": "Wikipedia", "pagina": f"https://en.wikipedia.org/wiki/{nome}"}
+        except Exception as e:  # noqa: BLE001
+            log.info("foto de card %r na Wikipédia: %s", termo, e)
+        if not meta:
+            meta = await buscar(http, termo, estrito=True)
+            if meta:
+                meta = {**meta, "url": meta["url"].replace(".jpg", "-m.jpg")}
+        meta_arq.write_text(json.dumps(meta or {"consulta": termo, "t": time.time()}, ensure_ascii=False), encoding="utf-8")
+        return meta
+
+
+# ── galeria: várias fotos de um tema, uma depois da outra ───
+_itens: dict[str, dict] = {}   # id → candidata aprovada (baixada em 4K só quando a tela pede)
+
+
+async def galeria(http: httpx.AsyncClient, consultas: list[str], maximo: int = 30) -> list[dict]:
+    """Fotos aprovadas para vários termos do mesmo tema, intercaladas (paisagem: lago, deserto, floresta, lago...).
+    Devolve só a lista (id + crédito); cada foto é baixada em 4K quando a tela chega nela (item())."""
+    consultas = [c.strip()[:120] for c in consultas if c and c.strip()][:8]
+    if not consultas:
+        return []
+    chave = _chave("galeria|" + "|".join(sorted(c.lower() for c in consultas)))
+    lista_arq = CACHE / f"galeria-{chave}.json"
+    CACHE.mkdir(parents=True, exist_ok=True)
+    if lista_arq.exists() and time.time() - lista_arq.stat().st_mtime < 7 * 24 * 3600:
+        lista = json.loads(lista_arq.read_text(encoding="utf-8"))
+    else:
+        t0 = time.perf_counter()
+        trava = asyncio.Semaphore(3)   # o Commons e o Openverse recusam rajadas grandes
+
+        async def uma(c: str):
+            async with trava:
+                return await _aprovadas(http, c, 14)
+
+        lotes = await asyncio.gather(*(uma(c) for c in consultas), return_exceptions=True)
+        filas = [[c for _, c in lote[0]] for lote in lotes if not isinstance(lote, Exception)]
+        lista, vistos = [], set()
+        for rodada in range(max((len(f) for f in filas), default=0)):   # intercala os termos
+            for fila in filas:
+                if rodada < len(fila):
+                    c = fila[rodada]
+                    ident = hashlib.sha1(c["original"].encode()).hexdigest()[:16]
+                    if ident not in vistos:
+                        vistos.add(ident)
+                        lista.append({**c, "id": ident})
+        lista = lista[:maximo]
+        lista_arq.write_text(json.dumps(lista, ensure_ascii=False), encoding="utf-8")
+        log.info("galeria %s: %d fotos (%.1fs)", consultas, len(lista), time.perf_counter() - t0)
+    for c in lista:
+        _itens[c["id"]] = c
+    return [{"id": c["id"], "titulo": c["titulo"].removeprefix("File:").rsplit(".", 1)[0][:80],
+             "autor": c.get("autor", ""), "licenca": c.get("licenca", ""), "fonte": c.get("fonte", "Wikimedia Commons")}
+            for c in lista]
+
+
+async def item(http: httpx.AsyncClient, ident: str) -> dict | None:
+    """Uma foto da galeria, já em 4K no cache local."""
+    if not re.fullmatch(r"[0-9a-f]{16}", ident):
+        return None
+    meta_arq = CACHE / f"item-{ident}.json"
+    async with _travas.setdefault("item" + ident, asyncio.Lock()):
+        if meta_arq.exists():
+            meta = json.loads(meta_arq.read_text(encoding="utf-8"))
+            if (CACHE / meta["arquivo"]).exists():
+                return meta
+        c = _itens.get(ident)
+        if not c:
+            return None
+        meta = await _salvar(http, c, ident, c["titulo"])
+        meta_arq.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
         return meta
 
 
 def arquivo(nome: str) -> Path | None:
-    if not re.fullmatch(r"[0-9a-f]{16}\.jpg", nome):
+    """O arquivo do cache. "<id>-m.jpg" é a versão reduzida (cards dos carrosséis), feita na primeira vez que é pedida."""
+    m = re.fullmatch(r"([0-9a-f]{16})(-m)?\.jpg", nome)
+    if not m:
         return None
     p = CACHE / nome
+    if not p.exists() and m[2] and (CACHE / f"{m[1]}.jpg").exists():
+        img = Image.open(CACHE / f"{m[1]}.jpg")
+        img.thumbnail((1280, 1280), Image.LANCZOS)
+        img.save(p, "JPEG", quality=84, optimize=True, progressive=True)
     return p if p.exists() else None

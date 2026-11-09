@@ -42,6 +42,8 @@ MIN_PALAVRAS = 6
 PERMANENCIA_S = 12           # uma cena do ambiente fica pelo menos isso antes de dar lugar a outro assunto
 VARIAR_S = 35                # mesmo assunto por mais que isso: a tela mostra outro ângulo dele
 PRIORIDADE_CONVERSA_S = 30   # depois de responder alguém, o ambiente não troca a tela por esse tempo
+PAINEL_S = 240               # uma resposta longa (painel com várias seções) fica esse tempo na tela
+PRIORIDADE_PAINEL_S = 150    # ... e o ambiente não a troca antes disso
 CONFIANCA_MIN = 0.4
 RECENTE_S = 40               # falas dos últimos X s definem o assunto; as anteriores só dão contexto
 ECO_FOLGA_S = 0.8
@@ -67,6 +69,8 @@ _ATALHOS = [
     ("parar_musica", re.compile(r"\b(?:para|pare|parar|desliga|desligar|tira|chega de|cala)\b.*\b(?:musica|radio|som)\b")),
     ("cancelar_timer", re.compile(r"\b(?:cancela|cancelar|para|pare|desliga|tira)\b.*\b(?:timer|cronometro|alarme|contagem)\b")),
     ("limpar_tela", re.compile(r"\b(?:limpa|limpar|apaga|apagar|tira|fecha)\b.*\btela\b")),
+    ("limpar_tela", re.compile(r"^(?:para|pare|parar|chega|tira|fecha)\b(?: de)?(?: (?:passar|mostrar))?(?: as| essas| com as)?"
+                               r" (?:imagens|fotos|galeria|slides?)\b")),
     ("volume_mais", re.compile(r"\b(?:aumenta|aumentar|sobe|subir|levanta)\b.*\b(?:volume|som|musica)\b|\bmais alto\b")),
     ("volume_menos", re.compile(r"\b(?:abaixa|abaixar|diminui|diminuir|baixa|baixar)\b.*\b(?:volume|som|musica)\b|\bmais baixo\b")),
 ]
@@ -76,6 +80,18 @@ _ENCERRAR = re.compile(r"^(?:(?:ok|beleza|certo|ta|show|perfeito|otimo|entendi)[
                        r"nada nao|deixa pra la|esquece|pode ir)\b")
 # sem "Ei, Zak", quem fala com o grupo ("vocês viram...", "pessoal, ...") não está falando com ele
 _PARA_OS_OUTROS = re.compile(r"\b(?:voces|pessoal|galera|alguem)\b")
+# pergunta que pede resposta longa (a tela vira um painel), mesmo que o modelo não tenha marcado "detalhar"
+_DETALHAR = re.compile(r"\b(?:explica\w*|como funciona\w*|historia d|quais (?:sao|foram|os|as)|compara\w*|diferenca\w*|"
+                       r"roteiro|planej\w*|passo a passo|pros e contras|vantagens|desvantagens|resum\w*|tudo sobre|"
+                       r"me (?:fala|conta|explica) (?:sobre|d[aoe]s?)|ideias|dicas|tipos de|principais|melhores)\b")
+# pergunta de um dado só: não vira painel mesmo que o modelo peça ("qual a altura do Everest?")
+_SIMPLES = re.compile(r"^(?:qual|quanto|quantos|quantas|quando|onde|quem|que horas|em que|que dia)\b")
+# pedidos de imagem: "gera uma imagem de...", "fica passando fotos de..."
+_GERAR_IMAGEM = re.compile(r"\b(?:gera|gere|gerar|cria|crie|criar|desenha|desenhe|desenhar|imagina|imagine|faz|faca|fazer)\b"
+                           r"(?:\s+\w+){0,3}?\s+(?:imagem|imagens|desenho|desenhos|ilustracao|ilustracoes|arte|figura)\b"
+                           r"|^(?:me\s+)?(?:desenha|desenhe|(?:imagina|imagine)(?!\s+(?:se|que|so|isso|como|quando|so)\b))\b")
+_VER_IMAGENS = re.compile(r"\b(?:passa|passar|passando|mostra|mostrar|mostrando|coloca|colocar|poe|por|bota|botar|exibe|exibir|"
+                          r"quero ver|deixa)\b(?:\s+\w+){0,4}?\s+(?:imagens|imagem|fotos|foto|fotografias|paisage\w*|wallpapers?)\b")
 # palavras que justificam a ação "clima" (o modelo às vezes a escolhia para perguntas como "altura do Everest")
 _CLIMA = re.compile(r"\b(?:tempo|clima|chuv\w*|chove\w*|frio|calor|graus|temperatura|hora|horas|sol|nublad\w*|previs\w*|vento|neve)\b")
 
@@ -240,6 +256,7 @@ class Zak:
         self.cerebro = Cerebro(cfg_ia)
         self.voz = Voz(cfg)
         self.gerador = Gerador(cfg)
+        self.gerador.ao_progresso = lambda d: self._enviar({"tipo": "zak_imagem", **d})
         prefs = modelos.ler()
         self.protecao: bool = bool(prefs.get("zak_protecao", cfg.get("protecao", True)))
         self.som: bool = bool(prefs.get("zak_som", True))   # botão de som da tela: sem som, ele só mostra a legenda
@@ -259,6 +276,7 @@ class Zak:
         self.cena: dict | None = None
         self.cena_origem = ""
         self.cena_em = 0.0
+        self._cenas = 0                    # conta as trocas de cena (o painel que chega atrasado não pisa numa cena nova)
         self.assunto = ""
         self.timers: list[dict] = []
         self.lembretes: list[dict] = []
@@ -279,7 +297,8 @@ class Zak:
             "timers": self.timers, "lembretes": sorted(self.lembretes, key=lambda l: l["quando"])[:5],
             "musica": self.musica, "volume": self.volume,
             # uma tela que conecta agora (ou recarrega) só recebe a cena se ela ainda estaria no ar
-            "cena": self.cena if self.cena and time.time() - self.cena_em < 120 else None,
+            "cena": self.cena if self.cena and (self.cena_origem == "galeria"
+                                                or time.time() - self.cena_em < self.cena.get("duracao_s", 120)) else None,
         }
 
     def _enviar(self, msg: dict) -> None:
@@ -352,7 +371,10 @@ class Zak:
                     continue
                 if not self.telas or self.sala.mutado or self.estado != "repouso" or self._falando_agora:
                     continue
-                if self.cena_origem == "conversa" and agora - self.cena_em < PRIORIDADE_CONVERSA_S:
+                if self.cena_origem == "galeria":
+                    continue                                     # pediram imagens: ficam até pedirem outra coisa
+                if self.cena_origem == "conversa" and agora - self.cena_em < (
+                        PRIORIDADE_PAINEL_S if (self.cena or {}).get("formato") == "painel" else PRIORIDADE_CONVERSA_S):
                     continue
                 if self.cena_origem == "ambiente" and agora - self.cena_em < PERMANENCIA_S:
                     continue                                     # a cena acabou de entrar: não pisca
@@ -510,6 +532,7 @@ class Zak:
                 return
             log.info("pedido%s: %s", " (continuação)" if seguimento else "", frase)
             historico = self._historico()
+            pesquisa = None
             try:
                 cidade = self.cfg_local.get("cidade") or ""
                 r = await self.cerebro.pedido(self.http, self.sala.modelo_ia, frase, cidade, await self._clima_local(),
@@ -522,6 +545,17 @@ class Zak:
                         self.sala.adicionar_linha(original or frase)
                         return
                     r["acao"] = "responder"
+                base = _base(frase)
+                gerar_img = bool(_GERAR_IMAGEM.search(base))
+                if gerar_img or _VER_IMAGENS.search(base):
+                    # pedido de imagens: galeria, mesmo que o modelo tenha respondido outra coisa
+                    if r["acao"] != "galeria":
+                        log.info("pedido de imagens (%s) → galeria", "gerar" if gerar_img else "fotos")
+                        r["acao"], r["imagens"] = "galeria", r["imagens"] or []
+                        r["fala"] = ""
+                    r["gerar"] = gerar_img
+                elif r["acao"] == "galeria":
+                    r["gerar"] = False   # só gera quando pedem para gerar/criar/desenhar
                 if r["acao"] == "clima" and not _CLIMA.search(_base(frase)):
                     # "altura do Everest" não é pergunta de clima: responde de verdade, com a Wikipédia de apoio
                     log.info("ação clima descartada para: %s", frase)
@@ -529,9 +563,10 @@ class Zak:
                 if r["pesquisar"] and r["acao"] == "responder":
                     trecho = await _wikipedia(self.http, r["pesquisar"])
                     if trecho:
+                        pesquisa, detalhar = (r["pesquisar"], trecho), r["detalhar"]
                         r = await self.cerebro.pedido(self.http, self.sala.modelo_ia, frase, cidade,
-                                                      await self._clima_local(), (r["pesquisar"], trecho),
-                                                      historico=historico)
+                                                      await self._clima_local(), pesquisa, historico=historico)
+                        r["detalhar"] = r["detalhar"] or detalhar
                         if r["acao"] == "ignorar":
                             r["acao"] = "responder"
             except Exception as e:  # noqa: BLE001
@@ -540,6 +575,9 @@ class Zak:
                 await self.falar("Desculpa, meu cérebro não respondeu agora. Tenta de novo em instantes?")
                 return
             self._estado("repouso")
+            if r["acao"] == "responder" and (_DETALHAR.search(_base(frase))
+                                             or (r["detalhar"] and not _SIMPLES.match(_base(frase)))):
+                r["painel"] = {"frase": frase, "pesquisa": pesquisa, "historico": historico}
             fala = await self._executar(r, original or frase)
             self._lembrar(frase, fala or r["fala"])
 
@@ -624,13 +662,65 @@ class Zak:
             await asyncio.sleep(1.5)
             self.sala.definir_mute(True)
             return
-        elif r["cena"]["blocos"]:
-            await self._mostrar(r["cena"], "conversa", pergunta=pergunta)
+        elif acao == "galeria":
+            fala = await self._galeria(r, pergunta) or fala
+        elif r["cena"]["blocos"] or r.get("painel"):
+            if r["cena"]["blocos"]:
+                await self._mostrar(r["cena"], "conversa", pergunta=pergunta)
+            if r.get("painel"):
+                # a resposta longa: a fala sai já, e a tela completa chega quando o modelo terminar de montá-la
+                asyncio.create_task(self._montar_painel(r, pergunta, self._cenas))
         self.publicar()
         if fala:
             self._abrir_conversa = True    # quando ele terminar de falar, continua ouvindo (sem "Ei, Zak")
             await self.falar(fala)
         return fala
+
+    async def _montar_painel(self, r: dict, pergunta: str, cenas: int) -> None:
+        p = r["painel"]
+        t0 = time.perf_counter()
+        try:
+            cena = await self.cerebro.painel(self.http, self.sala.modelo_ia, p["frase"], r["fala"], self.protecao,
+                                             p["pesquisa"], p["historico"])
+        except Exception as e:  # noqa: BLE001
+            log.warning("painel falhou: %s", e)
+            return
+        n = len(cena["blocos"])
+        log.info("painel: %d seções (%s) em %.1fs", n, ", ".join(b["tipo"] for b in cena["blocos"]), time.perf_counter() - t0)
+        if n < 2 or self._cenas != cenas:
+            return   # pouco conteúdo, ou outra cena já entrou (nova pergunta, timer, limpar...)
+        cena["foto"] = cena.get("foto") or r["cena"].get("foto")
+        cena["cor"] = cena.get("cor") or r["cena"].get("cor")
+        cena["gerar"] = r["cena"].get("gerar")
+        await self._mostrar(cena, "conversa", pergunta=pergunta)
+
+    async def _galeria(self, r: dict, pergunta: str) -> str:
+        """Só imagens em tela cheia, passando uma depois da outra (fotos buscadas ou imagens geradas)."""
+        cena = r["cena"]
+        imagens = r["imagens"] or [x for x in (cena.get("gerar") if r["gerar"] else cena.get("foto"),) if x]
+        gerar = r["gerar"] and self.gerador.disponivel
+        aviso = ""
+        if r["gerar"] and not gerar:
+            imagens = [cena.get("foto")] + imagens
+            aviso = "Não consigo gerar imagens neste computador, então vou mostrar fotos."
+            log.info("galeria: geração pedida, mas indisponível (%s)", self.gerador.detalhe)
+        if not gerar:
+            # busca de fotos: termos curtos (uma descrição longa não casa com o título de nenhuma foto)
+            imagens = list(dict.fromkeys(" ".join(i.split(",")[0].split()[:5]) for i in imagens if i))
+        if not imagens:
+            return "Que tipo de imagem você quer ver?"
+        # sem foto boa do tema, a tela gera uma (se der) em vez de ficar vazia
+        reserva = [x for x in [cena.get("gerar")] if x] if not gerar and self.gerador.disponivel else []
+        self.cena = {"origem": "galeria", "pergunta": pergunta, "visual": {}, "blocos": [], "t": time.time(),
+                     "galeria": {"imagens": imagens[:8], "gerar": gerar, "reserva": reserva,
+                                 "intervalo_s": 22 if gerar else 14}}
+        self.cena_origem, self.cena_em, self.assunto = "galeria", time.time(), ""
+        self._cenas += 1
+        log.info("galeria (%s): %s", "gerar" if gerar else "fotos", " | ".join(imagens)[:200])
+        self._enviar({"tipo": "zak_cena", "cena": self.cena})
+        if gerar and self.gerador.estado == "baixando":
+            return "O gerador de imagens ainda está sendo baixado. Assim que terminar, as imagens aparecem."
+        return aviso or r["fala"] or ("Gerando, só um instante." if gerar else "Claro, lá vai.")
 
     def _quando(self, r: dict) -> float | None:
         m = re.fullmatch(r"(\d{1,2})(?:[:h](\d{2})?)?", (r["horario"] or "").strip())
@@ -672,12 +762,16 @@ class Zak:
                                "max": lugar["max"], "min": lugar["min"], "lugar": lugar["nome"]})
         gerar = cena.get("gerar") if self.gerador.disponivel else ""   # sem gerador: a cena fica só com o fundo animado
         visual = {k: v for k, v in (("busca", cena.get("foto")), ("gerar", gerar), ("cor", cena.get("cor"))) if v}
-        self.cena = {"origem": origem, "pergunta": pergunta, "visual": visual, "blocos": blocos[:4], "t": time.time()}
+        painel = cena.get("formato") == "painel"
+        self.cena = {"origem": origem, "pergunta": pergunta, "visual": visual, "blocos": blocos[:9 if painel else 4],
+                     "t": time.time(), **({"formato": "painel", "duracao_s": PAINEL_S} if painel else {})}
         self.cena_origem, self.cena_em, self.assunto = origem, time.time(), assunto or self.assunto
+        self._cenas += 1
         self._enviar({"tipo": "zak_cena", "cena": self.cena})
 
     def limpar_tela(self) -> None:
         self.cena, self.cena_origem, self.assunto = None, "", ""
+        self._cenas += 1
         self._enviar({"tipo": "zak_limpar"})
 
     # ── voz ─────────────────────────────────────────────────
